@@ -151,10 +151,13 @@ class ImpulseAnalysis {
   final String emotionalInsight;
   final String alternative;
   final String percentOfMonthly;
+  /// Recent spending pattern summary from the API (e.g. shopping this week).
+  final String? spendingSnapshot;
 
   ImpulseAnalysis({
     required this.regretScore, required this.verdict, required this.comparison,
     required this.emotionalInsight, required this.alternative, required this.percentOfMonthly,
+    this.spendingSnapshot,
   });
 
   factory ImpulseAnalysis.fromJson(Map<String, dynamic> j) => ImpulseAnalysis(
@@ -164,7 +167,52 @@ class ImpulseAnalysis {
     emotionalInsight: j['emotional_insight']?? '',
     alternative:      j['alternative']      ?? '',
     percentOfMonthly: j['percentage_of_monthly']?.toString() ?? '0',
+    spendingSnapshot: j['spending_snapshot'] as String?,
   );
+
+  /// Full `/api/impulse/` payload: structured analysis + optional `spending_context`.
+  factory ImpulseAnalysis.fromApiResponse(Map<String, dynamic> data, String item, double price) {
+    final raw = data['analysis'];
+    final Map<String, dynamic> aj = raw is Map<String, dynamic>
+        ? raw
+        : ImpulseAnalysis.demo(item, price).toJson();
+    final base = ImpulseAnalysis.fromJson(aj);
+    final ctx = data['spending_context'];
+    String? snap;
+    if (ctx is Map<String, dynamic>) {
+      final parts = <String>[];
+      final nar = (ctx['pattern_narrative'] as String?)?.trim();
+      if (nar != null && nar.isNotEmpty) parts.add(nar);
+      final shop = ctx['shopping_last_7_days'];
+      final dine = ctx['dining_last_7_days'];
+      if (shop is num && shop > 0) {
+        parts.add('Shopping (last 7 days): \$${shop.toStringAsFixed(0)}');
+      }
+      if (dine is num && dine > 0) {
+        parts.add('Dining (last 7 days): \$${dine.toStringAsFixed(0)}');
+      }
+      snap = parts.isEmpty ? null : parts.join(' · ');
+    }
+    return ImpulseAnalysis(
+      regretScore: base.regretScore,
+      verdict: base.verdict,
+      comparison: base.comparison,
+      emotionalInsight: base.emotionalInsight,
+      alternative: base.alternative,
+      percentOfMonthly: base.percentOfMonthly,
+      spendingSnapshot: snap,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'regret_score': regretScore,
+    'verdict': verdict,
+    'comparison': comparison,
+    'emotional_insight': emotionalInsight,
+    'alternative': alternative,
+    'percentage_of_monthly': percentOfMonthly,
+    'spending_snapshot': spendingSnapshot,
+  };
 
   /// Map plain-text API response (`/api/impulse/`) onto the structured UI model.
   factory ImpulseAnalysis.fromMessage(ImpulseAnalysis demo, String message) {
@@ -181,21 +229,37 @@ class ImpulseAnalysis {
       emotionalInsight: trimmed,
       alternative: demo.alternative,
       percentOfMonthly: pct,
+      spendingSnapshot: demo.spendingSnapshot,
     );
   }
 
   factory ImpulseAnalysis.demo(String item, double price) {
-    final income = 3000.0;
+    const income = 3000.0;
     final pct = income > 0 ? (price / income * 100).toStringAsFixed(1) : '0';
     return ImpulseAnalysis(
       regretScore: 72,
       verdict: 'wait',
-      comparison: 'About ${pct}% of your monthly income',
+      comparison: 'About $pct% of your monthly income',
       emotionalInsight: 'Purchases made under excitement often lose appeal within 48 hours.',
       alternative: 'Wait 72 hours. If you still want it, buy guilt-free.',
       percentOfMonthly: pct,
+      spendingSnapshot: null,
     );
   }
+}
+
+class ChatMessageRow {
+  final int? id;
+  final String role;
+  final String content;
+
+  ChatMessageRow({this.id, required this.role, required this.content});
+
+  factory ChatMessageRow.fromJson(Map<String, dynamic> j) => ChatMessageRow(
+    id: j['id'] as int?,
+    role: j['role'] as String? ?? 'user',
+    content: j['content'] as String? ?? '',
+  );
 }
 
 class Subscription {

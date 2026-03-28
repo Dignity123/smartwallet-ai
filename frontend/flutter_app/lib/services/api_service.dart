@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import '../models/models.dart';
 
 /// Backend base URL. Android emulator cannot reach host `localhost`; use 10.0.2.2.
-String get _apiRoot {
+String get apiRoot {
   if (kIsWeb) return 'http://localhost:8000';
   switch (defaultTargetPlatform) {
     case TargetPlatform.android:
@@ -18,14 +18,159 @@ String get _apiRoot {
 }
 
 class ApiService {
-  static String get _base => '$_apiRoot/api';
-  static const _userId = 1;
+  static String get _base => '$apiRoot/api';
+  static String? accessToken;
+  static int userId = 1;
+  static String? userEmail;
+  static String? userName;
+  static bool authEnabledOnServer = false;
 
-  // ── Transactions + Summary ───────────────────────────────────────────────
+  static Map<String, String> _hdr({bool jsonBody = false}) {
+    final h = <String, String>{};
+    if (jsonBody) h['Content-Type'] = 'application/json';
+    final t = accessToken;
+    if (t != null && t.isNotEmpty) {
+      h['Authorization'] = 'Bearer $t';
+    }
+    return h;
+  }
+
+  static void _applyTokenPayload(Map<String, dynamic> j) {
+    accessToken = j['access_token'] as String?;
+    userId = j['user_id'] as int? ?? 1;
+    userEmail = j['email'] as String?;
+    userName = j['name'] as String?;
+    if (j.containsKey('auth_enabled')) {
+      authEnabledOnServer = j['auth_enabled'] == true;
+    }
+  }
+
+  // ── Auth ─────────────────────────────────────────────────────────────────
+  static Future<Map<String, dynamic>?> fetchMe() async {
+    try {
+      final res = await http
+          .get(Uri.parse('$_base/auth/me'), headers: _hdr())
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return null;
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      userId = j['id'] as int? ?? userId;
+      userEmail = j['email'] as String?;
+      userName = j['name'] as String?;
+      authEnabledOnServer = j['auth_enabled'] == true;
+      return j;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> loginEmail(String email, String password) async {
+    final res = await http
+        .post(
+          Uri.parse('$_base/auth/login'),
+          headers: _hdr(jsonBody: true),
+          body: jsonEncode({'email': email.trim(), 'password': password}),
+        )
+        .timeout(const Duration(seconds: 12));
+    if (res.statusCode != 200) return false;
+    final j = jsonDecode(res.body) as Map<String, dynamic>;
+    _applyTokenPayload(j);
+    return accessToken != null;
+  }
+
+  static Future<bool> registerEmail(String email, String password, {String name = 'Member'}) async {
+    final res = await http
+        .post(
+          Uri.parse('$_base/auth/register'),
+          headers: _hdr(jsonBody: true),
+          body: jsonEncode({'email': email.trim(), 'password': password, 'name': name}),
+        )
+        // bcrypt hashing on the server can take a moment on first register
+        .timeout(const Duration(seconds: 25));
+    if (res.statusCode != 200) return false;
+    final j = jsonDecode(res.body) as Map<String, dynamic>;
+    _applyTokenPayload(j);
+    return accessToken != null;
+  }
+
+  static Future<bool> loginWithGoogleIdToken(String idToken) async {
+    final res = await http
+        .post(
+          Uri.parse('$_base/auth/google'),
+          headers: _hdr(jsonBody: true),
+          body: jsonEncode({'id_token': idToken}),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) return false;
+    final j = jsonDecode(res.body) as Map<String, dynamic>;
+    _applyTokenPayload(j);
+    return accessToken != null;
+  }
+
+  static void clearSession() {
+    accessToken = null;
+    userEmail = null;
+    userName = null;
+    userId = 1;
+  }
+
+  // ── Chat ─────────────────────────────────────────────────────────────────
+  static Future<int?> createChatConversation({String title = 'Financial assistant'}) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_base/chat/conversations'),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode({'title': title}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return null;
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      return j['id'] as int?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<List<ChatMessageRow>> fetchChatMessages(int conversationId) async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$_base/chat/conversations/$conversationId/messages'),
+            headers: _hdr(),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return [];
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = j['messages'] as List? ?? [];
+      return list.map((e) => ChatMessageRow.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<String?> sendChatMessage(int conversationId, String content) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_base/chat/conversations/$conversationId/messages'),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode({'content': content}),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (res.statusCode != 200) return null;
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      final asst = j['assistant'] as Map<String, dynamic>?;
+      return asst?['content'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Transactions + Summary ─────────────────────────────────────────────
   static Future<SpendingSummary> fetchSummary() async {
     try {
-      final uri = Uri.parse('$_base/transactions/summary/$_userId');
-      final res = await http.get(uri).timeout(const Duration(seconds: 8));
+      final uri = Uri.parse('$_base/transactions/summary/$userId');
+      final res = await http.get(uri, headers: _hdr()).timeout(const Duration(seconds: 8));
       if (res.statusCode != 200) return SpendingSummary.demo();
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -53,10 +198,8 @@ class ApiService {
       final res = await http
           .post(
             Uri.parse('$_base/impulse/'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _hdr(jsonBody: true),
             body: jsonEncode({
-              'user_id': _userId,
-              'income': 3000.0,
               'item': item,
               'price': price,
             }),
@@ -71,7 +214,7 @@ class ApiService {
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       final analysis = data['analysis'];
       if (analysis is Map<String, dynamic>) {
-        return ImpulseAnalysis.fromJson(analysis);
+        return ImpulseAnalysis.fromApiResponse(data, item, price);
       }
       final message = data['message'] as String? ?? '';
       final demo = ImpulseAnalysis.demo(item, price);
@@ -87,8 +230,8 @@ class ApiService {
       final res = await http
           .post(
             Uri.parse('$_base/subscriptions/scan'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'user_id': _userId}),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode({}),
           )
           .timeout(const Duration(seconds: 20));
       if (res.statusCode != 200) return SubscriptionScan.demo();
@@ -151,10 +294,12 @@ class ApiService {
       out.add(CancelCandidate(
         merchant: merchants.join(', '),
         reason: note,
-        savings: savings > 0 ? savings : merchants.skip(1).fold<double>(
-              0,
-              (a, m) => a + (byMerchant[m]?.amount ?? 0),
-            ),
+        savings: savings > 0
+            ? savings
+            : merchants.skip(1).fold<double>(
+                0,
+                (a, m) => a + (byMerchant[m]?.amount ?? 0),
+              ),
       ));
     }
     return out;
@@ -183,8 +328,8 @@ class ApiService {
       final res = await http
           .post(
             Uri.parse('$_base/recommendations/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'user_id': _userId}),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode({'user_id': userId}),
           )
           .timeout(const Duration(seconds: 20));
       if (res.statusCode != 200) return _fallbackRecommendations();
@@ -276,7 +421,8 @@ class ApiService {
   // ── Budgets & alerts & Plaid & cash flow ────────────────────────────────
   static Future<List<BudgetGoalProgress>> fetchBudgets() async {
     try {
-      final res = await http.get(Uri.parse('$_base/budgets/$_userId')).timeout(const Duration(seconds: 8));
+      final res =
+          await http.get(Uri.parse('$_base/budgets/$userId'), headers: _hdr()).timeout(const Duration(seconds: 8));
       if (res.statusCode != 200) return [];
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       final goals = data['goals'] as List? ?? [];
@@ -290,8 +436,8 @@ class ApiService {
     try {
       final res = await http
           .post(
-            Uri.parse('$_base/budgets/$_userId/single'),
-            headers: {'Content-Type': 'application/json'},
+            Uri.parse('$_base/budgets/$userId/single'),
+            headers: _hdr(jsonBody: true),
             body: jsonEncode({
               'category': category,
               'monthly_limit': limit,
@@ -307,9 +453,9 @@ class ApiService {
 
   static Future<List<SmartAlert>> fetchAlerts({bool unreadOnly = false}) async {
     try {
-      final uri = Uri.parse('$_base/alerts/$_userId')
+      final uri = Uri.parse('$_base/alerts/$userId')
           .replace(queryParameters: {'unread_only': unreadOnly.toString()});
-      final res = await http.get(uri).timeout(const Duration(seconds: 8));
+      final res = await http.get(uri, headers: _hdr()).timeout(const Duration(seconds: 8));
       if (res.statusCode != 200) return [];
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       final list = data['alerts'] as List? ?? [];
@@ -321,21 +467,25 @@ class ApiService {
 
   static Future<void> evaluateAlerts() async {
     try {
-      await http.post(Uri.parse('$_base/alerts/$_userId/evaluate')).timeout(const Duration(seconds: 15));
+      await http
+          .post(Uri.parse('$_base/alerts/$userId/evaluate'), headers: _hdr())
+          .timeout(const Duration(seconds: 15));
     } catch (_) {}
   }
 
   static Future<void> markAlertRead(int id) async {
     try {
       await http
-          .patch(Uri.parse('$_base/alerts/$_userId/$id/read'))
+          .patch(Uri.parse('$_base/alerts/$userId/$id/read'), headers: _hdr())
           .timeout(const Duration(seconds: 8));
     } catch (_) {}
   }
 
   static Future<CashFlowForecast?> fetchCashFlow() async {
     try {
-      final res = await http.get(Uri.parse('$_base/cashflow/$_userId')).timeout(const Duration(seconds: 8));
+      final res = await http
+          .get(Uri.parse('$_base/cashflow/$userId'), headers: _hdr())
+          .timeout(const Duration(seconds: 8));
       if (res.statusCode != 200) return null;
       return CashFlowForecast.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
     } catch (_) {
@@ -345,7 +495,9 @@ class ApiService {
 
   static Future<bool> fetchPlaidLinked() async {
     try {
-      final res = await http.get(Uri.parse('$_base/plaid/status/$_userId')).timeout(const Duration(seconds: 8));
+      final res = await http
+          .get(Uri.parse('$_base/plaid/status/$userId'), headers: _hdr())
+          .timeout(const Duration(seconds: 8));
       if (res.statusCode != 200) return false;
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       return data['linked'] == true;
@@ -359,8 +511,8 @@ class ApiService {
       final res = await http
           .post(
             Uri.parse('$_base/plaid/link-token'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'user_id': _userId}),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode({}),
           )
           .timeout(const Duration(seconds: 15));
       if (res.statusCode != 200) return null;
@@ -375,8 +527,8 @@ class ApiService {
       final res = await http
           .post(
             Uri.parse('$_base/plaid/exchange'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'user_id': _userId, 'public_token': publicToken}),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode({'public_token': publicToken}),
           )
           .timeout(const Duration(seconds: 30));
       return res.statusCode == 200;
@@ -387,7 +539,9 @@ class ApiService {
 
   static Future<bool> syncPlaid() async {
     try {
-      final res = await http.post(Uri.parse('$_base/plaid/sync/$_userId')).timeout(const Duration(seconds: 60));
+      final res = await http
+          .post(Uri.parse('$_base/plaid/sync/$userId'), headers: _hdr())
+          .timeout(const Duration(seconds: 60));
       return res.statusCode == 200;
     } catch (_) {
       return false;
@@ -399,9 +553,8 @@ class ApiService {
       final res = await http
           .post(
             Uri.parse('$_base/subscriptions/cancel-intent'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _hdr(jsonBody: true),
             body: jsonEncode({
-              'user_id': _userId,
               'merchant': merchant,
               'amount_snapshot': amount,
             }),

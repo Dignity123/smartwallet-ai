@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/models.dart';
 import '../providers/providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -109,11 +110,12 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
 }
 
 class _AnalysisCard extends StatelessWidget {
-  final dynamic a;
+  final ImpulseAnalysis a;
   const _AnalysisCard({required this.a});
 
   @override
   Widget build(BuildContext context) {
+    final snap = a.spendingSnapshot;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -127,20 +129,45 @@ class _AnalysisCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              VerdictBadge(a.verdict as String),
+              VerdictBadge(a.verdict),
               const SizedBox(width: 10),
               Text('~${a.percentOfMonthly}% of monthly income',
                   style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
             ],
           ),
+          if (snap != null && snap.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.warningDim,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.calendar_view_week_rounded, color: AppColors.warning, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      snap,
+                      style: const TextStyle(color: AppColors.textPrimary, fontSize: 13, height: 1.45),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
-          Text(a.comparison as String,
+          Text(a.comparison,
               style: const TextStyle(
                   color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w700, height: 1.4)),
           const SizedBox(height: 14),
           const Text('Perspective', style: TextStyle(color: AppColors.textMuted, fontSize: 11, letterSpacing: 1)),
           const SizedBox(height: 6),
-          Text(a.emotionalInsight as String,
+          Text(a.emotionalInsight,
               style: const TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.55)),
           const SizedBox(height: 16),
           Container(
@@ -156,7 +183,7 @@ class _AnalysisCard extends StatelessWidget {
                 const Icon(Icons.tips_and_updates_outlined, color: AppColors.emerald, size: 20),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(a.alternative as String,
+                  child: Text(a.alternative,
                       style: const TextStyle(color: AppColors.textPrimary, fontSize: 13, height: 1.5)),
                 ),
               ],
