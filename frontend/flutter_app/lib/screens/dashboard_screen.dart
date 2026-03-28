@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
+import '../models/models.dart';
 import '../providers/providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -145,6 +146,18 @@ class _SpendingChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = categories.take(5).toList();
+    if (items.isEmpty) {
+      return Container(
+        height: 120,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: const Text('No category data yet', style: TextStyle(color: AppColors.textMuted)),
+      );
+    }
 
     return Container(
       height: 220,

@@ -83,14 +83,36 @@ class ImpulseAnalysis {
     percentOfMonthly: j['percentage_of_monthly']?.toString() ?? '0',
   );
 
-  factory ImpulseAnalysis.demo(String item, double price) => ImpulseAnalysis(
-    regretScore:      72,
-    verdict:          'wait',
-    comparison:       '3 weeks of groceries',
-    emotionalInsight: 'Purchases made under excitement often lose appeal within 48 hours.',
-    alternative:      'Wait 72 hours. If you still want it, buy guilt-free.',
-    percentOfMonthly: '4.3',
-  );
+  /// Map plain-text API response (`/api/impulse/`) onto the structured UI model.
+  factory ImpulseAnalysis.fromMessage(ImpulseAnalysis demo, String message) {
+    final trimmed = message.trim();
+    final firstLine = trimmed.split('\n').map((s) => s.trim()).firstWhere(
+          (s) => s.isNotEmpty,
+          orElse: () => 'Financial perspective',
+        );
+    final pct = demo.percentOfMonthly;
+    return ImpulseAnalysis(
+      regretScore: 55,
+      verdict: 'wait',
+      comparison: firstLine.length > 120 ? '${firstLine.substring(0, 117)}…' : firstLine,
+      emotionalInsight: trimmed,
+      alternative: demo.alternative,
+      percentOfMonthly: pct,
+    );
+  }
+
+  factory ImpulseAnalysis.demo(String item, double price) {
+    final income = 3000.0;
+    final pct = income > 0 ? (price / income * 100).toStringAsFixed(1) : '0';
+    return ImpulseAnalysis(
+      regretScore: 72,
+      verdict: 'wait',
+      comparison: 'About ${pct}% of your monthly income',
+      emotionalInsight: 'Purchases made under excitement often lose appeal within 48 hours.',
+      alternative: 'Wait 72 hours. If you still want it, buy guilt-free.',
+      percentOfMonthly: pct,
+    );
+  }
 }
 
 class Subscription {

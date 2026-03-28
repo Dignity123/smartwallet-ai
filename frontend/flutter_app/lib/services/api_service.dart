@@ -1,26 +1,46 @@
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:http/http.dart' as http;
+
 import '../models/models.dart';
 
+/// Backend base URL. Android emulator cannot reach host `localhost`; use 10.0.2.2.
+String get _apiRoot {
+  if (kIsWeb) return 'http://localhost:8000';
+  switch (defaultTargetPlatform) {
+    case TargetPlatform.android:
+      return 'http://10.0.2.2:8000';
+    default:
+      return 'http://localhost:8000';
+  }
+}
+
 class ApiService {
-  static const _base = 'http://localhost:8000/api';
+  static String get _base => '$_apiRoot/api';
   static const _userId = 1;
 
   // ── Transactions + Summary ───────────────────────────────────────────────
   static Future<SpendingSummary> fetchSummary() async {
     try {
-      final res = await http
-          .get(Uri.parse('$_base/transactions/$_userId'))
-          .timeout(const Duration(seconds: 6));
-      final data = jsonDecode(res.body);
-      final categories = (data['summary']['by_category'] as List)
-          .map((c) => CategorySpend.fromJson(c))
+      final uri = Uri.parse('$_base/transactions/summary/$_userId');
+      final res = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return SpendingSummary.demo();
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final summary = data['summary'] as Map<String, dynamic>?;
+      final balance = data['balance'] as Map<String, dynamic>?;
+      if (summary == null || balance == null) return SpendingSummary.demo();
+
+      final categories = (summary['by_category'] as List)
+          .map((c) => CategorySpend.fromJson(c as Map<String, dynamic>))
           .toList();
       return SpendingSummary(
-        totalSpend:  (data['summary']['total_spend']  as num).toDouble(),
-        savingsRate: (data['summary']['savings_rate'] as num).toDouble(),
-        byCategory:  categories,
-        balance:     AccountBalance.fromJson(data['balance']),
+        totalSpend: (summary['total_spend'] as num).toDouble(),
+        savingsRate: (summary['savings_rate'] as num).toDouble(),
+        byCategory: categories,
+        balance: AccountBalance.fromJson(balance),
       );
     } catch (_) {
       return SpendingSummary.demo();
@@ -32,18 +52,25 @@ class ApiService {
     try {
       final res = await http
           .post(
-            Uri.parse('$_base/impulse/check'),
+            Uri.parse('$_base/impulse/'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
-              'user_id':        _userId,
-              'item_name':      item,
-              'price':          price,
-              'monthly_income': 3000,
+              'income': 3000.0,
+              'item': item,
+              'price': price,
             }),
           )
-          .timeout(const Duration(seconds: 15));
-      final data = jsonDecode(res.body);
-      return ImpulseAnalysis.fromJson(data['analysis']);
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200) {
+        return ImpulseAnalysis.fromMessage(
+          ImpulseAnalysis.demo(item, price),
+          'Request failed (${res.statusCode}).',
+        );
+      }
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final message = data['message'] as String? ?? '';
+      final demo = ImpulseAnalysis.demo(item, price);
+      return ImpulseAnalysis.fromMessage(demo, message);
     } catch (_) {
       return ImpulseAnalysis.demo(item, price);
     }
@@ -58,19 +85,26 @@ class ApiService {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'user_id': _userId}),
           )
-          .timeout(const Duration(seconds: 15));
-      final data = jsonDecode(res.body);
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200) return SubscriptionScan.demo();
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
       final subs = (data['subscriptions'] as List)
-          .map((s) => Subscription.fromJson(s))
+          .map((s) => Subscription.fromJson(s as Map<String, dynamic>))
           .toList();
-      final candidates = (data['ai_analysis']['cancel_candidates'] as List? ?? [])
-          .map((c) => CancelCandidate.fromJson(c))
-          .toList();
+
+      final aiRaw = data['ai_analysis'];
+      final insight = aiRaw is String ? aiRaw : (aiRaw?['insight'] as String? ?? '');
+
+      final duplicates = (data['duplicates'] as List?) ?? [];
+      final candidates = _duplicatesToCandidates(duplicates, subs);
+      final wasted = _estimateWastedFromDuplicates(duplicates, subs);
+
       return SubscriptionScan(
-        subscriptions:    subs,
+        subscriptions: subs,
         totalMonthlyCost: (data['total_monthly_cost'] as num).toDouble(),
-        wastedMonthly:    (data['ai_analysis']['wasted_monthly'] as num? ?? 0).toDouble(),
-        insight:          data['ai_analysis']['insight'] ?? '',
+        wastedMonthly: wasted,
+        insight: insight.isNotEmpty ? insight : 'Review overlapping services in the same category.',
         cancelCandidates: candidates,
       );
     } catch (_) {
@@ -78,44 +112,140 @@ class ApiService {
     }
   }
 
+  static List<CancelCandidate> _duplicatesToCandidates(
+    List<dynamic> duplicates,
+    List<Subscription> subs,
+  ) {
+    final byMerchant = {for (final s in subs) s.merchant: s};
+    final out = <CancelCandidate>[];
+    for (final raw in duplicates) {
+      final d = raw as Map<String, dynamic>;
+      final merchants = (d['merchants'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      final note = d['note'] as String? ?? 'Overlapping services';
+      if (merchants.length < 2) continue;
+      double savings = 0;
+      for (var i = 1; i < merchants.length; i++) {
+        final m = merchants[i];
+        savings += byMerchant[m]?.amount ?? 0;
+      }
+      out.add(CancelCandidate(
+        merchant: merchants.join(', '),
+        reason: note,
+        savings: savings > 0 ? savings : merchants.skip(1).fold<double>(
+              0,
+              (a, m) => a + (byMerchant[m]?.amount ?? 0),
+            ),
+      ));
+    }
+    return out;
+  }
+
+  static double _estimateWastedFromDuplicates(
+    List<dynamic> duplicates,
+    List<Subscription> subs,
+  ) {
+    final byMerchant = {for (final s in subs) s.merchant: s.amount};
+    var total = 0.0;
+    for (final raw in duplicates) {
+      final d = raw as Map<String, dynamic>;
+      final merchants = (d['merchants'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      if (merchants.length < 2) continue;
+      for (var i = 1; i < merchants.length; i++) {
+        total += byMerchant[merchants[i]] ?? 0;
+      }
+    }
+    return total;
+  }
+
   // ── Recommendations ──────────────────────────────────────────────────────
   static Future<List<Recommendation>> fetchRecommendations() async {
     try {
       final res = await http
           .post(
-            Uri.parse('$_base/recommendations/generate'),
+            Uri.parse('$_base/recommendations/'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'user_id': _userId, 'monthly_income': 3000}),
+            body: jsonEncode({'user_id': _userId}),
           )
-          .timeout(const Duration(seconds: 15));
-      final data = jsonDecode(res.body);
-      return (data['recommendations'] as List)
-          .map((r) => Recommendation.fromJson(r))
-          .toList();
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200) return _fallbackRecommendations();
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final tips = data['tips'] as String? ?? '';
+      final summary = data['summary'] as Map<String, dynamic>?;
+      final totalSpend = (summary?['total_spend'] as num?)?.toDouble() ?? 0;
+
+      if (tips.trim().isEmpty) return _fallbackRecommendations();
+
+      return _tipsToRecommendations(tips, totalSpend);
     } catch (_) {
+      return _fallbackRecommendations();
+    }
+  }
+
+  static List<Recommendation> _tipsToRecommendations(String tips, double totalSpend) {
+    final rough = (totalSpend * 0.05).clamp(15, 120).toDouble();
+    final blocks = tips
+        .split(RegExp(r'\n\s*\n'))
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    if (blocks.length <= 1) {
+      final sentences = tips.split(RegExp(r'(?<=[.!?])\s+')).where((s) => s.trim().isNotEmpty).toList();
+      if (sentences.length >= 2) {
+        return List.generate(sentences.length.clamp(1, 4), (i) {
+          final chunk = sentences[i].trim();
+          return Recommendation(
+            title: i == 0 ? 'AI insights' : 'Tip ${i + 1}',
+            description: chunk,
+            monthlyImpact: (rough / sentences.length.clamp(1, 4)).clamp(5, rough),
+            difficulty: 'easy',
+            category: i.isEven ? 'budgeting' : 'savings',
+          );
+        });
+      }
       return [
         Recommendation(
-          title:         'Cut to One Streaming Service',
-          description:   'You have 3 streaming subscriptions. Cancel Hulu and Peacock — Netflix covers 90% of your viewing.',
-          monthlyImpact: 18.98,
-          difficulty:    'easy',
-          category:      'subscriptions',
-        ),
-        Recommendation(
-          title:         'Skip One Starbucks Day / Week',
-          description:   'You spend \$60+/month at coffee shops. Cutting one visit per week saves \$24 with minimal sacrifice.',
-          monthlyImpact: 24.00,
-          difficulty:    'easy',
-          category:      'impulse',
-        ),
-        Recommendation(
-          title:         'Route Savings to Emergency Fund',
-          description:   'With \$43/month freed up, you\'d build a \$516 emergency cushion over the next year.',
-          monthlyImpact: 43.00,
-          difficulty:    'medium',
-          category:      'savings',
+          title: 'AI insights',
+          description: tips.trim(),
+          monthlyImpact: rough,
+          difficulty: 'easy',
+          category: 'budgeting',
         ),
       ];
     }
+    return List.generate(blocks.length.clamp(1, 5), (i) {
+      return Recommendation(
+        title: 'Insight ${i + 1}',
+        description: blocks[i],
+        monthlyImpact: (rough / blocks.length).clamp(5, rough),
+        difficulty: 'easy',
+        category: 'budgeting',
+      );
+    });
   }
+
+  static List<Recommendation> _fallbackRecommendations() => [
+        Recommendation(
+          title: 'Cut to One Streaming Service',
+          description:
+              'You have several streaming subscriptions. Dropping one you rarely use can add up over the year.',
+          monthlyImpact: 18.98,
+          difficulty: 'easy',
+          category: 'subscriptions',
+        ),
+        Recommendation(
+          title: 'Skip One Coffee Run per Week',
+          description: 'Small recurring spends compound. Try one fewer discretionary purchase weekly.',
+          monthlyImpact: 24.0,
+          difficulty: 'easy',
+          category: 'impulse',
+        ),
+        Recommendation(
+          title: 'Route Savings to Emergency Fund',
+          description: 'Redirect freed-up cash to savings before it gets spent elsewhere.',
+          monthlyImpact: 43.0,
+          difficulty: 'medium',
+          category: 'savings',
+        ),
+      ];
 }
