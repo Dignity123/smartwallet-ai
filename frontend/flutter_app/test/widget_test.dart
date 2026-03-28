@@ -14,6 +14,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => ImpulseProvider()),
           ChangeNotifierProvider(create: (_) => SubscriptionProvider()),
           ChangeNotifierProvider(create: (_) => RecommendationsProvider()),
+          ChangeNotifierProvider(create: (_) => PlanProvider()),
         ],
         child: const SmartWalletApp(),
       ),
@@ -22,5 +23,6 @@ void main() {
     expect(find.byType(MaterialApp), findsOneWidget);
     expect(find.byType(BottomNavigationBar), findsOneWidget);
     expect(find.text('Dashboard'), findsOneWidget);
+    expect(find.text('Plan'), findsOneWidget);
   });
 }

@@ -71,3 +71,59 @@ class RecommendationsProvider extends ChangeNotifier {
     notifyListeners();
   }
 }
+
+// ── Plan (budgets, alerts, Plaid, cash flow) ────────────────────────────────
+class PlanProvider extends ChangeNotifier {
+  List<BudgetGoalProgress> budgets = [];
+  List<SmartAlert> alerts = [];
+  CashFlowForecast? cashflow;
+  bool plaidLinked = false;
+  String? lastLinkToken;
+  bool loading = false;
+
+  Future<void> refresh() async {
+    loading = true;
+    notifyListeners();
+    budgets = await ApiService.fetchBudgets();
+    alerts = await ApiService.fetchAlerts();
+    cashflow = await ApiService.fetchCashFlow();
+    plaidLinked = await ApiService.fetchPlaidLinked();
+    loading = false;
+    notifyListeners();
+  }
+
+  Future<void> runAlertChecks() async {
+    await ApiService.evaluateAlerts();
+    alerts = await ApiService.fetchAlerts();
+    notifyListeners();
+  }
+
+  Future<bool> addBudget(String category, double limit) async {
+    final ok = await ApiService.addBudgetGoal(category, limit);
+    if (ok) await refresh();
+    return ok;
+  }
+
+  Future<String?> requestPlaidLink() async {
+    lastLinkToken = await ApiService.createPlaidLinkToken();
+    notifyListeners();
+    return lastLinkToken;
+  }
+
+  Future<bool> submitPlaidToken(String token) async {
+    final ok = await ApiService.exchangePlaidPublicToken(token.trim());
+    if (ok) {
+      plaidLinked = true;
+      await ApiService.syncPlaid();
+      await refresh();
+    }
+    notifyListeners();
+    return ok;
+  }
+
+  Future<void> dismissAlert(int id) async {
+    await ApiService.markAlertRead(id);
+    alerts = await ApiService.fetchAlerts();
+    notifyListeners();
+  }
+}

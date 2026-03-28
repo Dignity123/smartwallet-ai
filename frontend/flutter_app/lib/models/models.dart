@@ -32,7 +32,90 @@ class CategorySpend {
     spent:          (j['spent']            as num).toDouble(),
     benchmark:      (j['benchmark']        as num).toDouble(),
     overBudget:     j['over_budget'] ?? false,
-    percentOfIncome:(j['percent_of_income']as num).toDouble(),
+    percentOfIncome:(j['percent_of_income'] as num?)?.toDouble()
+        ?? (j['percent_of_budget'] as num?)?.toDouble()
+        ?? 0.0,
+  );
+}
+
+class BudgetGoalProgress {
+  final int id;
+  final String category;
+  final double monthlyLimit;
+  final double spentThisMonth;
+  final double percentUsed;
+  final bool isOver;
+  final bool isNearLimit;
+
+  BudgetGoalProgress({
+    required this.id,
+    required this.category,
+    required this.monthlyLimit,
+    required this.spentThisMonth,
+    required this.percentUsed,
+    required this.isOver,
+    required this.isNearLimit,
+  });
+
+  factory BudgetGoalProgress.fromJson(Map<String, dynamic> j) => BudgetGoalProgress(
+    id: j['id'] as int,
+    category: j['category'] as String,
+    monthlyLimit: (j['monthly_limit'] as num).toDouble(),
+    spentThisMonth: (j['spent_this_month'] as num).toDouble(),
+    percentUsed: (j['percent_used'] as num).toDouble(),
+    isOver: j['is_over'] as bool? ?? false,
+    isNearLimit: j['is_near_limit'] as bool? ?? false,
+  );
+}
+
+class SmartAlert {
+  final int id;
+  final String type;
+  final String title;
+  final String body;
+  final bool isRead;
+
+  SmartAlert({
+    required this.id,
+    required this.type,
+    required this.title,
+    required this.body,
+    required this.isRead,
+  });
+
+  factory SmartAlert.fromJson(Map<String, dynamic> j) => SmartAlert(
+    id: j['id'] as int,
+    type: j['type'] as String? ?? '',
+    title: j['title'] as String? ?? '',
+    body: j['body'] as String? ?? '',
+    isRead: j['is_read'] as bool? ?? false,
+  );
+}
+
+class CashFlowForecast {
+  final double recurring;
+  final double variable;
+  final double projectedSpend;
+  final double available;
+  final double projectedBalance30d;
+  final String risk;
+
+  CashFlowForecast({
+    required this.recurring,
+    required this.variable,
+    required this.projectedSpend,
+    required this.available,
+    required this.projectedBalance30d,
+    required this.risk,
+  });
+
+  factory CashFlowForecast.fromJson(Map<String, dynamic> j) => CashFlowForecast(
+    recurring: (j['recurring_monthly_estimate'] as num).toDouble(),
+    variable: (j['variable_monthly_estimate'] as num).toDouble(),
+    projectedSpend: (j['projected_next_month_spend'] as num).toDouble(),
+    available: (j['current_available_balance'] as num).toDouble(),
+    projectedBalance30d: (j['projected_balance_in_30d'] as num).toDouble(),
+    risk: j['overdraft_risk'] as String? ?? 'low',
   );
 }
 

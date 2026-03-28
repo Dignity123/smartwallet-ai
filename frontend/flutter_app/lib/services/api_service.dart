@@ -55,6 +55,7 @@ class ApiService {
             Uri.parse('$_base/impulse/'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
+              'user_id': _userId,
               'income': 3000.0,
               'item': item,
               'price': price,
@@ -68,6 +69,10 @@ class ApiService {
         );
       }
       final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final analysis = data['analysis'];
+      if (analysis is Map<String, dynamic>) {
+        return ImpulseAnalysis.fromJson(analysis);
+      }
       final message = data['message'] as String? ?? '';
       final demo = ImpulseAnalysis.demo(item, price);
       return ImpulseAnalysis.fromMessage(demo, message);
@@ -94,11 +99,26 @@ class ApiService {
           .toList();
 
       final aiRaw = data['ai_analysis'];
-      final insight = aiRaw is String ? aiRaw : (aiRaw?['insight'] as String? ?? '');
-
+      String insight = '';
+      List<CancelCandidate> candidates = [];
+      double wasted = 0;
+      if (aiRaw is Map<String, dynamic>) {
+        insight = aiRaw['insight'] as String? ?? '';
+        final cc = aiRaw['cancel_candidates'] as List?;
+        if (cc != null) {
+          candidates = cc.map((e) => CancelCandidate.fromJson(e as Map<String, dynamic>)).toList();
+        }
+        wasted = (aiRaw['wasted_monthly'] as num?)?.toDouble() ?? 0;
+      } else if (aiRaw is String) {
+        insight = aiRaw;
+      }
       final duplicates = (data['duplicates'] as List?) ?? [];
-      final candidates = _duplicatesToCandidates(duplicates, subs);
-      final wasted = _estimateWastedFromDuplicates(duplicates, subs);
+      if (candidates.isEmpty) {
+        candidates = _duplicatesToCandidates(duplicates, subs);
+      }
+      if (wasted <= 0) {
+        wasted = _estimateWastedFromDuplicates(duplicates, subs);
+      }
 
       return SubscriptionScan(
         subscriptions: subs,
@@ -170,6 +190,10 @@ class ApiService {
       if (res.statusCode != 200) return _fallbackRecommendations();
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final rawRecs = data['recommendations'] as List?;
+      if (rawRecs != null && rawRecs.isNotEmpty) {
+        return rawRecs.map((e) => Recommendation.fromJson(e as Map<String, dynamic>)).toList();
+      }
       final tips = data['tips'] as String? ?? '';
       final summary = data['summary'] as Map<String, dynamic>?;
       final totalSpend = (summary?['total_spend'] as num?)?.toDouble() ?? 0;
@@ -248,4 +272,144 @@ class ApiService {
           category: 'savings',
         ),
       ];
+
+  // ── Budgets & alerts & Plaid & cash flow ────────────────────────────────
+  static Future<List<BudgetGoalProgress>> fetchBudgets() async {
+    try {
+      final res = await http.get(Uri.parse('$_base/budgets/$_userId')).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return [];
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final goals = data['goals'] as List? ?? [];
+      return goals.map((e) => BudgetGoalProgress.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<bool> addBudgetGoal(String category, double limit) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_base/budgets/$_userId/single'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'category': category,
+              'monthly_limit': limit,
+              'alert_threshold_pct': 0.8,
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<List<SmartAlert>> fetchAlerts({bool unreadOnly = false}) async {
+    try {
+      final uri = Uri.parse('$_base/alerts/$_userId')
+          .replace(queryParameters: {'unread_only': unreadOnly.toString()});
+      final res = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return [];
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = data['alerts'] as List? ?? [];
+      return list.map((e) => SmartAlert.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> evaluateAlerts() async {
+    try {
+      await http.post(Uri.parse('$_base/alerts/$_userId/evaluate')).timeout(const Duration(seconds: 15));
+    } catch (_) {}
+  }
+
+  static Future<void> markAlertRead(int id) async {
+    try {
+      await http
+          .patch(Uri.parse('$_base/alerts/$_userId/$id/read'))
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
+  static Future<CashFlowForecast?> fetchCashFlow() async {
+    try {
+      final res = await http.get(Uri.parse('$_base/cashflow/$_userId')).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return null;
+      return CashFlowForecast.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> fetchPlaidLinked() async {
+    try {
+      final res = await http.get(Uri.parse('$_base/plaid/status/$_userId')).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return false;
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      return data['linked'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<String?> createPlaidLinkToken() async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_base/plaid/link-token'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'user_id': _userId}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return null;
+      return (jsonDecode(res.body) as Map<String, dynamic>)['link_token'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> exchangePlaidPublicToken(String publicToken) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_base/plaid/exchange'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'user_id': _userId, 'public_token': publicToken}),
+          )
+          .timeout(const Duration(seconds: 30));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> syncPlaid() async {
+    try {
+      final res = await http.post(Uri.parse('$_base/plaid/sync/$_userId')).timeout(const Duration(seconds: 60));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> markCancelIntent(String merchant, double amount) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_base/subscriptions/cancel-intent'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'user_id': _userId,
+              'merchant': merchant,
+              'amount_snapshot': amount,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
 }

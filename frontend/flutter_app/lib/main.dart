@@ -6,6 +6,7 @@ import 'screens/dashboard_screen.dart';
 import 'screens/impulse_screen.dart';
 import 'screens/subscriptions_screen.dart';
 import 'screens/recommendations_screen.dart';
+import 'screens/plan_screen.dart';
 
 void main() {
   runApp(
@@ -15,6 +16,7 @@ void main() {
         ChangeNotifierProvider(create: (_) => ImpulseProvider()),
         ChangeNotifierProvider(create: (_) => SubscriptionProvider()),
         ChangeNotifierProvider(create: (_) => RecommendationsProvider()),
+        ChangeNotifierProvider(create: (_) => PlanProvider()),
       ],
       child: const SmartWalletApp(),
     ),
@@ -45,13 +47,15 @@ class _MainShellState extends State<MainShell> {
     DashboardScreen(),
     ImpulseScreen(),
     SubscriptionsScreen(),
+    PlanScreen(),
     RecommendationsScreen(),
   ];
 
   static const _navItems = [
     BottomNavigationBarItem(icon: Icon(Icons.dashboard_outlined),    activeIcon: Icon(Icons.dashboard),    label: 'Dashboard'),
     BottomNavigationBarItem(icon: Icon(Icons.shield_outlined),       activeIcon: Icon(Icons.shield),       label: 'Impulse'),
-    BottomNavigationBarItem(icon: Icon(Icons.radar_outlined),        activeIcon: Icon(Icons.radar),        label: 'Subscriptions'),
+    BottomNavigationBarItem(icon: Icon(Icons.radar_outlined),        activeIcon: Icon(Icons.radar),        label: 'Subs'),
+    BottomNavigationBarItem(icon: Icon(Icons.account_balance_wallet_outlined), activeIcon: Icon(Icons.account_balance_wallet), label: 'Plan'),
     BottomNavigationBarItem(icon: Icon(Icons.lightbulb_outline),     activeIcon: Icon(Icons.lightbulb),    label: 'Insights'),
   ];
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../providers/providers.dart';
+import '../services/api_service.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
@@ -242,7 +243,7 @@ class _SubscriptionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(14),
@@ -265,6 +266,17 @@ class _SubscriptionTile extends StatelessWidget {
               Text(fmt(sub.amount), style: const TextStyle(color: AppColors.emerald, fontWeight: FontWeight.w700, fontSize: 14)),
               Text(sub.frequency, style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
             ]),
+            IconButton(
+              tooltip: 'Mark cancelling — alert if charged again',
+              icon: const Icon(Icons.flag_outlined, color: AppColors.warning, size: 20),
+              onPressed: () async {
+                final ok = await ApiService.markCancelIntent(sub.merchant as String, (sub.amount as num).toDouble());
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(ok ? 'Tracking cancellation for ${sub.merchant}' : 'Could not save')),
+                );
+              },
+            ),
           ],
         ),
       );
