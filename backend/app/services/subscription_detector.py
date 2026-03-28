@@ -1,30 +1,13 @@
-"""Heuristics to infer subscriptions from transaction streams."""
+"""Infer subscriptions from transaction streams using amount + cadence heuristics."""
 
 from collections import defaultdict
 from typing import Any
 
+from app.services.recurring_heuristics import subscriptions_from_transactions
+
 
 def detect_subscriptions(transactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_merchant: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for t in transactions:
-        if t.get("is_recurring"):
-            by_merchant[t["merchant"]].append(t)
-
-    result: list[dict[str, Any]] = []
-    for merchant, rows in by_merchant.items():
-        amounts = [float(r["amount"]) for r in rows]
-        avg = sum(amounts) / len(amounts)
-        result.append(
-            {
-                "merchant": merchant,
-                "amount": round(avg, 2),
-                "category": rows[0].get("category", "Other"),
-                "frequency": "monthly",
-                "charges_seen": len(rows),
-                "is_active": True,
-            }
-        )
-    return sorted(result, key=lambda s: s["amount"], reverse=True)
+    return subscriptions_from_transactions(transactions)
 
 
 def find_duplicate_subscriptions(subscriptions: list[dict[str, Any]]) -> list[dict[str, Any]]:

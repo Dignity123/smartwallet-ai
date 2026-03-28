@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.database.db import get_db
+from app.auth.deps import get_current_user, require_uid_matches
 from app.database import schemas
+from app.database.db import get_db
 from app.services.ai_service import analyze_subscriptions, generate_recommendations
 from app.services.plaid_service import get_transactions
 from app.services.spending_analyzer import summarize_spending
@@ -17,10 +18,15 @@ class RecommendationsRequest(BaseModel):
 
 
 @router.post("/")
-def get_recommendations(req: RecommendationsRequest, db: Session = Depends(get_db)):
+def post_recommendations(
+    req: RecommendationsRequest,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, req.user_id)
     try:
-        user = db.query(schemas.User).filter(schemas.User.id == req.user_id).first()
-        income = float(user.monthly_income) if user and user.monthly_income else 3000.0
+        u = db.query(schemas.User).filter(schemas.User.id == req.user_id).first()
+        income = float(u.monthly_income) if u and u.monthly_income else 3000.0
         transactions = get_transactions(req.user_id, days=45, db=db)
         summary = summarize_spending(transactions, monthly_income=income)
         subs = detect_subscriptions(transactions)
@@ -33,5 +39,9 @@ def get_recommendations(req: RecommendationsRequest, db: Session = Depends(get_d
 
 
 @router.get("/{user_id}")
-def get_recommendations_get(user_id: int, db: Session = Depends(get_db)):
-    return get_recommendations(RecommendationsRequest(user_id=user_id), db)
+def get_recommendations_get(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    return post_recommendations(RecommendationsRequest(user_id=user_id), db, user)

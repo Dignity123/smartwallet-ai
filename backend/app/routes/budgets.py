@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.auth.deps import get_current_user, require_uid_matches
 from app.database import schemas
 from app.database.db import get_db
 from app.services.plaid_service import get_transactions
@@ -27,7 +28,12 @@ def _month_start():
 
 
 @router.get("/{user_id}")
-def list_budgets_with_progress(user_id: int, db: Session = Depends(get_db)):
+def list_budgets_with_progress(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     user = db.query(schemas.User).filter(schemas.User.id == user_id).first()
     income = float(user.monthly_income) if user and user.monthly_income else 3000.0
     goals = db.query(schemas.BudgetGoal).filter(schemas.BudgetGoal.user_id == user_id).all()
@@ -71,7 +77,13 @@ def list_budgets_with_progress(user_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/{user_id}")
-def upsert_budgets(user_id: int, body: BudgetBulkUpsert, db: Session = Depends(get_db)):
+def upsert_budgets(
+    user_id: int,
+    body: BudgetBulkUpsert,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     db.query(schemas.BudgetGoal).filter(schemas.BudgetGoal.user_id == user_id).delete()
     for g in body.goals:
         if g.monthly_limit <= 0:
@@ -92,7 +104,13 @@ def upsert_budgets(user_id: int, body: BudgetBulkUpsert, db: Session = Depends(g
 
 
 @router.post("/{user_id}/single")
-def add_single_goal(user_id: int, goal: BudgetGoalIn, db: Session = Depends(get_db)):
+def add_single_goal(
+    user_id: int,
+    goal: BudgetGoalIn,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     db.add(
         schemas.BudgetGoal(
             user_id=user_id,
@@ -109,7 +127,13 @@ def add_single_goal(user_id: int, goal: BudgetGoalIn, db: Session = Depends(get_
 
 
 @router.delete("/{user_id}/{goal_id}")
-def delete_goal(user_id: int, goal_id: int, db: Session = Depends(get_db)):
+def delete_goal(
+    user_id: int,
+    goal_id: int,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     row = (
         db.query(schemas.BudgetGoal)
         .filter(schemas.BudgetGoal.id == goal_id, schemas.BudgetGoal.user_id == user_id)

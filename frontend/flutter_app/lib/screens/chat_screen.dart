@@ -32,12 +32,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _openConversation() async {
     setState(() => _loading = true);
-    final id = await ApiService.createChatConversation();
+    final (id, err) = await ApiService.createChatConversation();
     if (!mounted) return;
     if (id == null) {
       setState(() => _loading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not start chat — check auth and API')),
+        SnackBar(
+          content: Text(err ?? 'Could not start chat'),
+          duration: const Duration(seconds: 6),
+        ),
       );
       return;
     }

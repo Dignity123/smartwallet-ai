@@ -6,8 +6,13 @@ import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
 
-/// Backend base URL. Android emulator cannot reach host `localhost`; use 10.0.2.2.
+/// Backend base URL.
+/// Override for a physical device: `flutter run --dart-define=SMARTWALLET_API_URL=http://192.168.1.5:8000`
 String get apiRoot {
+  const fromEnv = String.fromEnvironment('SMARTWALLET_API_URL', defaultValue: '');
+  if (fromEnv.isNotEmpty) {
+    return fromEnv.endsWith('/') ? fromEnv.substring(0, fromEnv.length - 1) : fromEnv;
+  }
   if (kIsWeb) return 'http://localhost:8000';
   switch (defaultTargetPlatform) {
     case TargetPlatform.android:
@@ -19,102 +24,34 @@ String get apiRoot {
 
 class ApiService {
   static String get _base => '$apiRoot/api';
-  static String? accessToken;
   static int userId = 1;
   static String? userEmail;
   static String? userName;
-  static bool authEnabledOnServer = false;
 
   static Map<String, String> _hdr({bool jsonBody = false}) {
     final h = <String, String>{};
     if (jsonBody) h['Content-Type'] = 'application/json';
-    final t = accessToken;
-    if (t != null && t.isNotEmpty) {
-      h['Authorization'] = 'Bearer $t';
-    }
     return h;
   }
 
-  static void _applyTokenPayload(Map<String, dynamic> j) {
-    accessToken = j['access_token'] as String?;
-    userId = j['user_id'] as int? ?? 1;
-    userEmail = j['email'] as String?;
-    userName = j['name'] as String?;
-    if (j.containsKey('auth_enabled')) {
-      authEnabledOnServer = j['auth_enabled'] == true;
-    }
-  }
-
-  // ── Auth ─────────────────────────────────────────────────────────────────
-  static Future<Map<String, dynamic>?> fetchMe() async {
+  /// Loads the current user from `/api/auth/me` when the API allows anonymous access (AUTH_ENABLED=false).
+  /// No login screen — the backend uses the demo user by default.
+  static Future<void> fetchProfile() async {
     try {
       final res = await http
           .get(Uri.parse('$_base/auth/me'), headers: _hdr())
-          .timeout(const Duration(seconds: 8));
-      if (res.statusCode != 200) return null;
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode != 200) return;
       final j = jsonDecode(res.body) as Map<String, dynamic>;
       userId = j['id'] as int? ?? userId;
       userEmail = j['email'] as String?;
       userName = j['name'] as String?;
-      authEnabledOnServer = j['auth_enabled'] == true;
-      return j;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static Future<bool> loginEmail(String email, String password) async {
-    final res = await http
-        .post(
-          Uri.parse('$_base/auth/login'),
-          headers: _hdr(jsonBody: true),
-          body: jsonEncode({'email': email.trim(), 'password': password}),
-        )
-        .timeout(const Duration(seconds: 12));
-    if (res.statusCode != 200) return false;
-    final j = jsonDecode(res.body) as Map<String, dynamic>;
-    _applyTokenPayload(j);
-    return accessToken != null;
-  }
-
-  static Future<bool> registerEmail(String email, String password, {String name = 'Member'}) async {
-    final res = await http
-        .post(
-          Uri.parse('$_base/auth/register'),
-          headers: _hdr(jsonBody: true),
-          body: jsonEncode({'email': email.trim(), 'password': password, 'name': name}),
-        )
-        // bcrypt hashing on the server can take a moment on first register
-        .timeout(const Duration(seconds: 25));
-    if (res.statusCode != 200) return false;
-    final j = jsonDecode(res.body) as Map<String, dynamic>;
-    _applyTokenPayload(j);
-    return accessToken != null;
-  }
-
-  static Future<bool> loginWithGoogleIdToken(String idToken) async {
-    final res = await http
-        .post(
-          Uri.parse('$_base/auth/google'),
-          headers: _hdr(jsonBody: true),
-          body: jsonEncode({'id_token': idToken}),
-        )
-        .timeout(const Duration(seconds: 15));
-    if (res.statusCode != 200) return false;
-    final j = jsonDecode(res.body) as Map<String, dynamic>;
-    _applyTokenPayload(j);
-    return accessToken != null;
-  }
-
-  static void clearSession() {
-    accessToken = null;
-    userEmail = null;
-    userName = null;
-    userId = 1;
+    } catch (_) {}
   }
 
   // ── Chat ─────────────────────────────────────────────────────────────────
-  static Future<int?> createChatConversation({String title = 'Financial assistant'}) async {
+  /// Returns `(conversationId, null)` on success, or `(null, errorMessage)` on failure.
+  static Future<(int?, String?)> createChatConversation({String title = 'Financial assistant'}) async {
     try {
       final res = await http
           .post(
@@ -123,12 +60,34 @@ class ApiService {
             body: jsonEncode({'title': title}),
           )
           .timeout(const Duration(seconds: 15));
-      if (res.statusCode != 200) return null;
-      final j = jsonDecode(res.body) as Map<String, dynamic>;
-      return j['id'] as int?;
-    } catch (_) {
-      return null;
+      if (res.statusCode == 200) {
+        final j = jsonDecode(res.body) as Map<String, dynamic>;
+        final id = j['id'] as int?;
+        if (id != null) return (id, null);
+        return (null, 'Invalid response from server');
+      }
+      if (res.statusCode == 401) {
+        return (
+          null,
+          'API rejected the request (401). Use AUTH_ENABLED=false, or set ALLOW_ANONYMOUS_DEMO=true on the server.',
+        );
+      }
+      final detail = _tryDetail(res.body);
+      return (null, 'Chat failed (HTTP ${res.statusCode})${detail != null ? ': $detail' : ''}');
+    } catch (e) {
+      return (
+        null,
+        'Cannot reach API at $apiRoot — use the correct URL (e.g. --dart-define=SMARTWALLET_API_URL=...) or start the backend. ($e)',
+      );
     }
+  }
+
+  static String? _tryDetail(String body) {
+    try {
+      final j = jsonDecode(body);
+      if (j is Map && j['detail'] != null) return j['detail'].toString();
+    } catch (_) {}
+    return null;
   }
 
   static Future<List<ChatMessageRow>> fetchChatMessages(int conversationId) async {

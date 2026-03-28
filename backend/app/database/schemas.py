@@ -12,12 +12,15 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     name = Column(String)
     monthly_income = Column(Float, default=0.0)
+    hashed_password = Column(String, nullable=True)
+    google_sub = Column(String, unique=True, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     transactions = relationship("Transaction", back_populates="owner")
     subscriptions = relationship("Subscription", back_populates="owner")
     plaid_items = relationship("PlaidItem", back_populates="owner")
     budget_goals = relationship("BudgetGoal", back_populates="owner")
     alerts = relationship("Alert", back_populates="owner")
+    chat_conversations = relationship("ChatConversation", back_populates="owner")
 
 
 class Transaction(Base):
@@ -95,3 +98,24 @@ class SubscriptionCancellation(Base):
     amount_snapshot = Column(Float, nullable=True)
     marked_at = Column(DateTime, default=datetime.utcnow)
     active = Column(Boolean, default=True)
+
+
+class ChatConversation(Base):
+    __tablename__ = "chat_conversations"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    title = Column(String, default="Financial assistant")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    owner = relationship("User", back_populates="chat_conversations")
+    messages = relationship("ChatMessage", back_populates="conversation")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("chat_conversations.id"), index=True)
+    role = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    conversation = relationship("ChatConversation", back_populates="messages")

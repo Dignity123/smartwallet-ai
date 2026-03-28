@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.auth.deps import get_current_user, require_uid_matches
 from app.database import schemas
 from app.database.db import get_db
 from app.services.alert_engine import evaluate_alerts
@@ -11,7 +12,13 @@ router = APIRouter()
 
 
 @router.get("/{user_id}")
-def list_alerts(user_id: int, unread_only: bool = False, db: Session = Depends(get_db)):
+def list_alerts(
+    user_id: int,
+    unread_only: bool = False,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     q = db.query(schemas.Alert).filter(schemas.Alert.user_id == user_id)
     if unread_only:
         q = q.filter(schemas.Alert.is_read.is_(False))
@@ -33,13 +40,24 @@ def list_alerts(user_id: int, unread_only: bool = False, db: Session = Depends(g
 
 
 @router.post("/{user_id}/evaluate")
-def run_alert_engine(user_id: int, db: Session = Depends(get_db)):
+def run_alert_engine(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     n = evaluate_alerts(db, user_id)
     return {"new_alerts": n}
 
 
 @router.patch("/{user_id}/{alert_id}/read")
-def mark_read(user_id: int, alert_id: int, db: Session = Depends(get_db)):
+def mark_read(
+    user_id: int,
+    alert_id: int,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     row = (
         db.query(schemas.Alert)
         .filter(schemas.Alert.id == alert_id, schemas.Alert.user_id == user_id)
@@ -53,7 +71,12 @@ def mark_read(user_id: int, alert_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{user_id}/read-all")
-def mark_all_read(user_id: int, db: Session = Depends(get_db)):
+def mark_all_read(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     db.query(schemas.Alert).filter(schemas.Alert.user_id == user_id).update({"is_read": True})
     db.commit()
     return {"status": "ok"}

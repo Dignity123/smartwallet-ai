@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.services.plaid_service import RECURRING_MERCHANTS, get_account_balance, get_transactions
+from app.services.plaid_service import get_account_balance, get_transactions
 
 
 def forecast_cash_flow(user_id: int, db: Session) -> dict[str, Any]:
@@ -19,7 +19,7 @@ def forecast_cash_flow(user_id: int, db: Session) -> dict[str, Any]:
     for t in txns:
         amt = float(t.get("amount", 0))
         dstr = (t.get("date") or "")[:7]
-        is_rec = bool(t.get("is_recurring")) or t.get("merchant") in RECURRING_MERCHANTS
+        is_rec = bool(t.get("is_recurring"))
         if is_rec:
             m = t.get("merchant") or "?"
             rec_by_merchant[m].append(amt)

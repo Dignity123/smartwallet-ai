@@ -14,7 +14,7 @@ from app.services.alert_engine import (
     maybe_alert_subscription_price_change,
 )
 from app.services.plaid_core import get_plaid_client, plaid_configured
-from app.services.plaid_service import RECURRING_MERCHANTS
+from app.services.recurring_heuristics import recompute_is_recurring_flags
 
 
 def _pfc_to_category(pfc: Any) -> str:
@@ -45,19 +45,17 @@ def upsert_plaid_transaction(db: Session, user_id: int, t: dict[str, Any]) -> bo
     merchant = t.get("merchant_name") or t.get("name") or "Unknown"
     cat = _pfc_to_category(t.get("personal_finance_category"))
     dt = _to_dt(t.get("date"))
-    is_rec = merchant in RECURRING_MERCHANTS
-
     if existing:
         old_amt = float(existing.amount)
+        was_rec = bool(existing.is_recurring)
         existing.amount = spend
         existing.merchant = merchant
         existing.category = cat
         existing.date = dt
-        existing.is_recurring = is_rec
         existing.account_id = t.get("account_id")
-        if is_rec and abs(spend - old_amt) > 0.01:
-            maybe_alert_subscription_price_change(db, user_id, merchant, old_amt, spend)
         maybe_alert_cancellation_charge(db, user_id, merchant, spend, dt)
+        if was_rec and abs(spend - old_amt) > 0.01:
+            maybe_alert_subscription_price_change(db, user_id, merchant, old_amt, spend)
         return False
 
     row = schemas.Transaction(
@@ -66,14 +64,12 @@ def upsert_plaid_transaction(db: Session, user_id: int, t: dict[str, Any]) -> bo
         merchant=merchant,
         category=cat,
         date=dt,
-        is_recurring=is_rec,
+        is_recurring=False,
         plaid_id=tid,
         account_id=t.get("account_id"),
     )
     db.add(row)
     db.flush()
-    if is_rec:
-        maybe_alert_subscription_price_change(db, user_id, merchant, 0.0, spend)
     maybe_alert_cancellation_charge(db, user_id, merchant, spend, dt)
     return True
 
@@ -110,6 +106,7 @@ def sync_item_transactions(db: Session, item: schemas.PlaidItem) -> dict[str, An
 
     item.transactions_cursor = cursor
     db.commit()
+    recompute_is_recurring_flags(db, item.user_id)
     return {"added": total_added, "cursor_set": bool(cursor)}
 
 

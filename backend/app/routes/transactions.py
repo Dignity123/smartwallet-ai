@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.database.db import get_db
+from app.auth.deps import get_current_user, require_uid_matches
 from app.database import schemas
+from app.database.db import get_db
 from app.services.plaid_service import get_account_balance, get_transactions
 from app.services.spending_analyzer import summarize_spending
 
@@ -15,7 +16,13 @@ def _category_budget_map(db: Session, user_id: int) -> dict[str, float]:
 
 
 @router.get("/summary/{user_id}")
-def transaction_summary(user_id: int, days: int = 30, db: Session = Depends(get_db)):
+def transaction_summary(
+    user_id: int,
+    days: int = 30,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     try:
         user = db.query(schemas.User).filter(schemas.User.id == user_id).first()
         income = float(user.monthly_income) if user and user.monthly_income else 3000.0

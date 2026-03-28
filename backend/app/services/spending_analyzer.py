@@ -1,7 +1,39 @@
 from collections import defaultdict
+from datetime import datetime
 from typing import Optional
 
 # Fallback when user has not set custom category budgets (fraction of monthly income)
+def _parse_txn_date(t: dict) -> datetime | None:
+    raw = t.get("date")
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        d = raw
+    else:
+        try:
+            d = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if d.tzinfo:
+        d = d.replace(tzinfo=None)
+    return d
+
+
+def category_totals_last_days(transactions: list, days: int = 7) -> dict[str, float]:
+    """Sum spend by category within the last `days` (UTC window)."""
+    from datetime import timedelta
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    out: dict[str, float] = defaultdict(float)
+    for t in transactions:
+        d = _parse_txn_date(t)
+        if d is None or d < cutoff:
+            continue
+        cat = t.get("category") or "Uncategorized"
+        out[cat] += float(t.get("amount") or 0)
+    return {k: round(v, 2) for k, v in out.items()}
+
+
 CATEGORY_BENCHMARKS = {
     "Food & Drink": 0.15,
     "Groceries": 0.10,

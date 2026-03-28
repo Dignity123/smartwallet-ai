@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.auth.deps import get_current_user, require_uid_matches
 from app.database import schemas
 from app.database.db import get_db
 from app.services.plaid_core import get_plaid_client, plaid_configured
@@ -10,17 +11,15 @@ from app.services.plaid_sync import handle_webhook_payload, sync_item_transactio
 router = APIRouter()
 
 
-class LinkTokenRequest(BaseModel):
-    user_id: int = 1
-
-
 class ExchangeRequest(BaseModel):
-    user_id: int = 1
     public_token: str
 
 
 @router.post("/link-token")
-def create_link_token(body: LinkTokenRequest, db: Session = Depends(get_db)):
+def create_link_token(
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
     if not plaid_configured():
         raise HTTPException(
             status_code=503,
@@ -33,7 +32,7 @@ def create_link_token(body: LinkTokenRequest, db: Session = Depends(get_db)):
 
     client = get_plaid_client()
     req = LinkTokenCreateRequest(
-        user=LinkTokenCreateRequestUser(client_user_id=str(body.user_id)),
+        user=LinkTokenCreateRequestUser(client_user_id=str(user.id)),
         client_name="SmartWallet AI",
         products=[Products("transactions")],
         country_codes=[CountryCode("US")],
@@ -45,7 +44,11 @@ def create_link_token(body: LinkTokenRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/exchange")
-def exchange_public_token(body: ExchangeRequest, db: Session = Depends(get_db)):
+def exchange_public_token(
+    body: ExchangeRequest,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
     if not plaid_configured():
         raise HTTPException(status_code=503, detail="Plaid not configured")
     from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
@@ -62,13 +65,13 @@ def exchange_public_token(body: ExchangeRequest, db: Session = Depends(get_db)):
     existing = db.query(schemas.PlaidItem).filter(schemas.PlaidItem.item_id == item_id).first()
     if existing:
         existing.access_token = access
-        existing.user_id = body.user_id
+        existing.user_id = user.id
         db.commit()
         db.refresh(existing)
         item = existing
     else:
         item = schemas.PlaidItem(
-            user_id=body.user_id,
+            user_id=user.id,
             item_id=item_id,
             access_token=access,
         )
@@ -86,7 +89,12 @@ def exchange_public_token(body: ExchangeRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/sync/{user_id}")
-def manual_sync(user_id: int, db: Session = Depends(get_db)):
+def manual_sync(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     items = db.query(schemas.PlaidItem).filter(schemas.PlaidItem.user_id == user_id).all()
     if not items:
         raise HTTPException(status_code=404, detail="No linked Plaid items")
@@ -109,6 +117,11 @@ async def plaid_webhook(request: Request):
 
 
 @router.get("/status/{user_id}")
-def plaid_status(user_id: int, db: Session = Depends(get_db)):
+def plaid_status(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: schemas.User = Depends(get_current_user),
+):
+    require_uid_matches(user, user_id)
     n = db.query(schemas.PlaidItem).filter(schemas.PlaidItem.user_id == user_id).count()
     return {"linked": n > 0, "items": n, "plaid_configured": plaid_configured()}

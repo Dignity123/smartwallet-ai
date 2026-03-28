@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import schemas
 from app.database.db import SessionLocal
 from app.services.plaid_core import get_plaid_client, plaid_configured
+from app.services.recurring_heuristics import recurring_transaction_ids
 
 load_dotenv()
 
@@ -29,18 +30,13 @@ MOCK_TRANSACTIONS = [
     {"id": "t13", "merchant": "Peacock", "amount": 5.99, "category": "Entertainment", "date": (datetime.now() - timedelta(days=15)).isoformat()},
     {"id": "t14", "merchant": "LinkedIn Premium", "amount": 39.99, "category": "Software", "date": (datetime.now() - timedelta(days=20)).isoformat()},
     {"id": "t15", "merchant": "Shell Gas", "amount": 68.00, "category": "Transportation", "date": (datetime.now() - timedelta(days=8)).isoformat()},
+    # Second hits ~30d apart so recurring heuristics fire without a merchant allowlist
+    {"id": "t16", "merchant": "Netflix", "amount": 15.99, "category": "Entertainment", "date": (datetime.now() - timedelta(days=33)).isoformat()},
+    {"id": "t17", "merchant": "Spotify", "amount": 9.99, "category": "Entertainment", "date": (datetime.now() - timedelta(days=31)).isoformat()},
+    {"id": "t18", "merchant": "Hulu", "amount": 12.99, "category": "Entertainment", "date": (datetime.now() - timedelta(days=34)).isoformat()},
+    {"id": "t19", "merchant": "Gym Membership", "amount": 40.00, "category": "Fitness", "date": (datetime.now() - timedelta(days=38)).isoformat()},
+    {"id": "t20", "merchant": "Adobe Creative Cloud", "amount": 54.99, "category": "Software", "date": (datetime.now() - timedelta(days=36)).isoformat()},
 ]
-
-RECURRING_MERCHANTS = {
-    "Netflix",
-    "Spotify",
-    "Amazon Prime",
-    "Hulu",
-    "Gym Membership",
-    "Adobe Creative Cloud",
-    "Peacock",
-    "LinkedIn Premium",
-}
 
 
 def _row_to_dict(r: schemas.Transaction, user_id: int) -> dict[str, Any]:
@@ -74,13 +70,14 @@ def get_transactions(user_id: int, days: int = 30, db: Optional[Session] = None)
         if rows:
             return [_row_to_dict(r, user_id) for r in rows]
         if USE_MOCK:
+            base = [{**t, "user_id": user_id} for t in MOCK_TRANSACTIONS]
+            rids = recurring_transaction_ids(base)
             return [
                 {
                     **t,
-                    "user_id": user_id,
-                    "is_recurring": t["merchant"] in RECURRING_MERCHANTS,
+                    "is_recurring": str(t["id"]) in rids,
                 }
-                for t in MOCK_TRANSACTIONS
+                for t in base
             ]
         return []
     finally:
