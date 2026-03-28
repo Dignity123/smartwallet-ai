@@ -48,9 +48,11 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="SmartWallet AI", version="1.0.0", lifespan=lifespan)
 
+# Flutter Web runs on e.g. localhost:5xxx while the API is on localhost:8000 — that is cross-origin.
+# Browsers reject allow_origins=["*"] together with allow_credentials=True (invalid CORS combo).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
