@@ -151,7 +151,8 @@ def send_message(
     if not reply_text:
         reply_text = (
             "I couldn’t generate a full answer just now. "
-            "Check that GEMINI_API_KEY is set on the server, or try again in a moment. "
+            "Confirm GEMINI_API_KEY on the server, check Gemini quota at https://ai.dev/rate-limit , "
+            "or try again shortly. "
             "Meanwhile: skim last week’s spending by category and pick one line item to cut by 10%."
         )
     asst = schemas.ChatMessage(

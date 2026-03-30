@@ -83,6 +83,7 @@ class ApiService {
         '   python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000\n\n'
         '2) On a real phone, use your PC\'s LAN IP:\n'
         '   flutter run --dart-define=SMARTWALLET_API_URL=http://192.168.x.x:8000\n\n'
+        '3) Android: HTTP to the dev API needs a full restart after manifest changes — stop the app and run `flutter run` again (not just hot reload).\n\n'
         '($e)',
       );
     }

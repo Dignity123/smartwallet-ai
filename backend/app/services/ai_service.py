@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from typing import Any
@@ -9,7 +10,36 @@ from google.genai import types
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_MODEL = "gemini-2.0-flash"
+
+
+def _user_visible_gemini_error(exc: BaseException) -> str:
+    """Turn SDK/API failures into text we can show in chat (never raises)."""
+    raw = str(exc)
+    low = raw.lower()
+    if "429" in raw or "resource_exhausted" in low or "quota" in low:
+        return (
+            "The AI could not run because Google Gemini returned a quota error (HTTP 429). "
+            "Free-tier limits may be used up for this model or project. "
+            "Check usage at https://ai.dev/rate-limit and your plan in Google AI Studio (https://aistudio.google.com). "
+            "You can also set GEMINI_MODEL in backend/.env to another model your key supports. "
+            "Meanwhile: review last week’s spending by category and pick one line to cut by ~10%."
+        )
+    if "404" in raw and ("not found" in low or "not_found" in low):
+        return (
+            "The configured GEMINI_MODEL is missing or not available for generateContent with this API. "
+            "Update GEMINI_MODEL in backend/.env to a model listed for your key in Google AI Studio."
+        )
+    if "401" in raw or "403" in raw:
+        return (
+            "Google Gemini rejected the request (auth). Confirm GEMINI_API_KEY in backend/.env matches an active key from Google AI Studio."
+        )
+    return (
+        f"The AI request failed ({type(exc).__name__}). See the backend terminal for the full error. "
+        "Verify GEMINI_API_KEY and GEMINI_MODEL, then try again."
+    )
 
 
 def _configured() -> bool:
@@ -99,7 +129,11 @@ Write the assistant's next reply. Be concise (under ~220 words), practical, and 
             "Until then: pick one category to trim this week, pause non-essential buys for 48 hours, and automate a small transfer to savings on payday."
         )
 
-    return _generate_text(prompt, max_output_tokens=1200)
+    try:
+        return _generate_text(prompt, max_output_tokens=1200)
+    except Exception as e:
+        logger.warning("financial_assistant_reply Gemini error: %s", e)
+        return _user_visible_gemini_error(e)
 
 
 def compute_impulse_regret_score(
