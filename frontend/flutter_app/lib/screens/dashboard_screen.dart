@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import '../theme.dart';
+import '../utils/greeting.dart';
 import '../widgets/common.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -39,7 +40,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── Greeting ──────────────────────────────────────────────────
-              const Text('Good morning 👋', style: TextStyle(color: AppColors.textMuted, fontSize: 14)),
+              Text(timeBasedGreeting(), style: const TextStyle(color: AppColors.textMuted, fontSize: 14)),
               const SizedBox(height: 4),
               const Text("Here's your money pulse.",
                   style: TextStyle(color: AppColors.textPrimary, fontSize: 24, fontWeight: FontWeight.w800)),

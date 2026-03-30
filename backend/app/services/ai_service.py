@@ -102,6 +102,88 @@ Write the assistant's next reply. Be concise (under ~220 words), practical, and 
     return _generate_text(prompt, max_output_tokens=1200)
 
 
+def compute_impulse_regret_score(
+    price: float,
+    monthly_income: float,
+    available_balance: float,
+    savings_rate: float,
+    shopping_last_7_days: float,
+) -> int:
+    """
+    0–100 regret / strain score from numbers only (matches UI expectations when price or balance moves).
+    Higher when the buy is large vs income, eats liquid savings, savings rate is weak, or shopping was already heavy.
+    """
+    score = 0.0
+    income = max(float(monthly_income or 0), 1.0)
+    pct_income = (float(price) / income) * 100.0
+    score += min(44.0, pct_income * 1.75)
+
+    avail = float(available_balance or 0.0)
+    if avail <= 0.0:
+        score += 26.0
+    else:
+        burn = float(price) / max(avail, 1.0)
+        if burn >= 1.0:
+            score += 34.0
+        elif burn >= 0.5:
+            score += 24.0
+        elif burn >= 0.25:
+            score += 14.0
+        elif burn >= 0.1:
+            score += 6.0
+
+    sr = float(savings_rate or 0.0)
+    if sr < 3.0:
+        score += 14.0
+    elif sr < 8.0:
+        score += 9.0
+    elif sr < 15.0:
+        score += 5.0
+
+    weekly_income = income / 4.33
+    if weekly_income > 0.0:
+        shop_press = float(shopping_last_7_days or 0.0) / weekly_income
+        score += min(16.0, shop_press * 11.0)
+
+    return int(max(0, min(100, round(score))))
+
+
+def _apply_regret_from_context(
+    analysis: dict[str, Any],
+    price: float,
+    user_spending: dict[str, Any],
+) -> dict[str, Any]:
+    out = dict(analysis)
+    out["regret_score"] = compute_impulse_regret_score(
+        price=price,
+        monthly_income=float(user_spending.get("income", 3000) or 3000),
+        available_balance=float(user_spending.get("available_balance", 0) or 0),
+        savings_rate=float(user_spending.get("savings_rate", 0) or 0),
+        shopping_last_7_days=float(user_spending.get("shopping_last_7_days", 0) or 0),
+    )
+    return out
+
+
+def _finalize_impulse_analysis(
+    analysis: dict[str, Any],
+    price: float,
+    user_spending: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply regret score; if purchase is under 20% of monthly income, verdict is buy_now (wait optional)."""
+    out = _apply_regret_from_context(analysis, price, user_spending)
+    income = max(float(user_spending.get("income", 3000) or 3000), 1.0)
+    pct = (float(price) / income) * 100.0
+    if pct < 20.0:
+        out["verdict"] = "buy_now"
+        prefix = (
+            "Under 20% of your monthly income — no mandatory wait unless you want a pause."
+        )
+        insight = str(out.get("emotional_insight") or "").strip()
+        if not insight.startswith("Under 20%"):
+            out["emotional_insight"] = f"{prefix} {insight}".strip()
+    return out
+
+
 def analyze_impulse_purchase(item: str, price: float, user_spending: dict) -> dict[str, Any]:
     """Predict regret likelihood and spending context (JSON for API clients)."""
     cat7 = user_spending.get("last_7_days_by_category") or {}
@@ -116,12 +198,15 @@ Their recent spending context (approx. last 30 days in the rolling window we use
 - Monthly grocery spend: ${user_spending.get('groceries', 0):.2f}
 - Monthly dining out: ${user_spending.get('dining', 0):.2f}
 - Monthly income estimate: ${user_spending.get('income', 3000):.2f}
+- Estimated available balance (linked accounts): ${user_spending.get('available_balance', 0):.2f}
 - Current savings rate: {user_spending.get('savings_rate', 10)}%
 - Spending by category in the last 7 days (JSON): {cat7_preview}
 - Shopping spend last 7 days: ${user_spending.get('shopping_last_7_days', 0):.2f}
 - Highlights: {narrative or "n/a"}
 
-Use the 7-day category totals to personalize advice (e.g., if shopping is already high, say so). Respond ONLY with a JSON object (no markdown) with these keys:
+Use the 7-day category totals to personalize advice (e.g., if shopping is already high, say so).
+If the purchase is under 20% of monthly income, verdict should usually be buy_now (waiting is optional, not required).
+Respond ONLY with a JSON object (no markdown) with these keys:
 {{
   "regret_score": <0-100 integer, likelihood of regret>,
   "verdict": "<buy_now | wait | skip>",
@@ -137,8 +222,7 @@ Use the 7-day category totals to personalize advice (e.g., if shopping is alread
         pct = (price / income * 100) if income else 0.0
         shop = float(user_spending.get("shopping_last_7_days", 0) or 0)
         extra = f" You've spent about ${shop:.0f} on shopping in the last 7 days." if shop else ""
-        return {
-            "regret_score": 65,
+        base = {
             "verdict": "wait",
             "comparison": f"About {pct:.1f}% of your estimated monthly income",
             "weekly_equivalent": f"${(price / 4.33):.2f} per week if spread like a monthly bill",
@@ -146,9 +230,11 @@ Use the 7-day category totals to personalize advice (e.g., if shopping is alread
             "emotional_insight": f"Pause 48–72 hours; many impulse buys lose their appeal.{extra}",
             "alternative": "Add to a wish list and revisit after a full weekend.",
         }
+        return _finalize_impulse_analysis(base, price, user_spending)
 
     raw = _generate_text(prompt, max_output_tokens=600)
-    return _parse_json_object(raw)
+    parsed = _parse_json_object(raw)
+    return _finalize_impulse_analysis(parsed, price, user_spending)
 
 
 def analyze_subscriptions(subscriptions: list) -> dict[str, Any]:

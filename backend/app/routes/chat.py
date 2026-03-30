@@ -144,7 +144,16 @@ def send_message(
         "spending_summary": summary,
     }
 
-    reply_text = financial_assistant_reply(history, snapshot)
+    try:
+        reply_text = financial_assistant_reply(history, snapshot).strip()
+    except Exception:
+        reply_text = ""
+    if not reply_text:
+        reply_text = (
+            "I couldn’t generate a full answer just now. "
+            "Check that GEMINI_API_KEY is set on the server, or try again in a moment. "
+            "Meanwhile: skim last week’s spending by category and pick one line item to cut by 10%."
+        )
     asst = schemas.ChatMessage(
         conversation_id=conversation_id,
         role="assistant",

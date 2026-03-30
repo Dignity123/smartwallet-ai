@@ -6,7 +6,7 @@ from app.auth.deps import get_current_user
 from app.database import schemas
 from app.database.db import get_db
 from app.services.ai_service import analyze_impulse_purchase
-from app.services.plaid_service import get_transactions
+from app.services.plaid_service import get_account_balance, get_transactions
 from app.services.spending_analyzer import category_totals_last_days, summarize_spending
 
 router = APIRouter()
@@ -64,6 +64,8 @@ def check_impulse(
             category_budgets=budgets if budgets else None,
         )
         recent = category_totals_last_days(txns, 7)
+        bal = get_account_balance(uid, db=db)
+        available = float(bal.get("available") or 0.0)
         user_spending = {
             "groceries": summary.get("groceries", 0),
             "dining": summary.get("dining", 0),
@@ -73,6 +75,8 @@ def check_impulse(
             "shopping_last_7_days": float(recent.get("Shopping", 0) or 0),
             "dining_last_7_days": float(recent.get("Food & Drink", 0) or 0),
             "pattern_narrative": _pattern_narrative(recent),
+            "available_balance": available,
+            "total_spend_window": float(summary.get("total_spend", 0) or 0),
         }
         analysis = analyze_impulse_purchase(body.item, body.price, user_spending)
         msg = analysis.get("emotional_insight") or analysis.get("comparison") or ""

@@ -14,7 +14,6 @@ void main() {
           ChangeNotifierProvider(create: (_) => DashboardProvider()),
           ChangeNotifierProvider(create: (_) => ImpulseProvider()),
           ChangeNotifierProvider(create: (_) => SubscriptionProvider()),
-          ChangeNotifierProvider(create: (_) => RecommendationsProvider()),
           ChangeNotifierProvider(create: (_) => PlanProvider()),
         ],
         child: MaterialApp(

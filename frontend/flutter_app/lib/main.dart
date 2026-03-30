@@ -5,19 +5,19 @@ import 'providers/providers.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/impulse_screen.dart';
 import 'screens/subscriptions_screen.dart';
-import 'screens/recommendations_screen.dart';
+import 'screens/savings_goals_screen.dart';
 import 'screens/plan_screen.dart';
 import 'screens/chat_screen.dart';
 import 'services/api_service.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => DashboardProvider()),
         ChangeNotifierProvider(create: (_) => ImpulseProvider()),
         ChangeNotifierProvider(create: (_) => SubscriptionProvider()),
-        ChangeNotifierProvider(create: (_) => RecommendationsProvider()),
         ChangeNotifierProvider(create: (_) => PlanProvider()),
       ],
       child: const SmartWalletApp(),
@@ -51,7 +51,7 @@ class _MainShellState extends State<MainShell> {
     ImpulseScreen(),
     SubscriptionsScreen(),
     PlanScreen(),
-    RecommendationsScreen(),
+    SavingsGoalsScreen(),
   ];
 
   static const _navItems = [
@@ -59,7 +59,10 @@ class _MainShellState extends State<MainShell> {
     BottomNavigationBarItem(icon: Icon(Icons.shield_outlined), activeIcon: Icon(Icons.shield), label: 'Impulse'),
     BottomNavigationBarItem(icon: Icon(Icons.radar_outlined), activeIcon: Icon(Icons.radar), label: 'Subs'),
     BottomNavigationBarItem(icon: Icon(Icons.account_balance_wallet_outlined), activeIcon: Icon(Icons.account_balance_wallet), label: 'Plan'),
-    BottomNavigationBarItem(icon: Icon(Icons.lightbulb_outline), activeIcon: Icon(Icons.lightbulb), label: 'Insights'),
+    BottomNavigationBarItem(
+        icon: Icon(Icons.track_changes_outlined),
+        activeIcon: Icon(Icons.track_changes_rounded),
+        label: 'Goals'),
   ];
 
   @override

@@ -160,8 +160,57 @@ class ImpulseAnalysis {
     this.spendingSnapshot,
   });
 
+  /// Same formula as backend `compute_impulse_regret_score` (offline / API-fallback UI).
+  static int heuristicRegretScore({
+    required double price,
+    required double monthlyIncome,
+    required double availableBalance,
+    required double savingsRate,
+    required double shoppingLast7Days,
+  }) {
+    var score = 0.0;
+    final income = monthlyIncome <= 0 ? 1.0 : monthlyIncome;
+    final pctIncome = (price / income) * 100.0;
+    score += (pctIncome * 1.75).clamp(0.0, 44.0);
+    final avail = availableBalance;
+    if (avail <= 0) {
+      score += 26.0;
+    } else {
+      final burn = price / (avail < 1 ? 1.0 : avail);
+      if (burn >= 1.0) {
+        score += 34.0;
+      } else if (burn >= 0.5) {
+        score += 24.0;
+      } else if (burn >= 0.25) {
+        score += 14.0;
+      } else if (burn >= 0.1) {
+        score += 6.0;
+      }
+    }
+    if (savingsRate < 3) {
+      score += 14.0;
+    } else if (savingsRate < 8) {
+      score += 9.0;
+    } else if (savingsRate < 15) {
+      score += 5.0;
+    }
+    final weeklyIncome = income / 4.33;
+    if (weeklyIncome > 0) {
+      final shopPress = shoppingLast7Days / weeklyIncome;
+      score += (shopPress * 11.0).clamp(0.0, 16.0);
+    }
+    return score.round().clamp(0, 100);
+  }
+
+  static int _parseRegretScore(dynamic raw) {
+    if (raw == null) return 0;
+    if (raw is int) return raw.clamp(0, 100);
+    if (raw is double) return raw.round().clamp(0, 100);
+    return int.tryParse(raw.toString())?.clamp(0, 100) ?? 0;
+  }
+
   factory ImpulseAnalysis.fromJson(Map<String, dynamic> j) => ImpulseAnalysis(
-    regretScore:      j['regret_score'] ?? 0,
+    regretScore:      _parseRegretScore(j['regret_score']),
     verdict:          j['verdict']          ?? 'wait',
     comparison:       j['comparison']       ?? '',
     emotionalInsight: j['emotional_insight']?? '',
@@ -223,8 +272,8 @@ class ImpulseAnalysis {
         );
     final pct = demo.percentOfMonthly;
     return ImpulseAnalysis(
-      regretScore: 55,
-      verdict: 'wait',
+      regretScore: demo.regretScore,
+      verdict: demo.verdict,
       comparison: firstLine.length > 120 ? '${firstLine.substring(0, 117)}…' : firstLine,
       emotionalInsight: trimmed,
       alternative: demo.alternative,
@@ -235,10 +284,22 @@ class ImpulseAnalysis {
 
   factory ImpulseAnalysis.demo(String item, double price) {
     const income = 3000.0;
-    final pct = income > 0 ? (price / income * 100).toStringAsFixed(1) : '0';
+    final pctVal = income > 0 ? (price / income * 100) : 0.0;
+    final pct = pctVal.toStringAsFixed(1);
+    final demoBal = AccountBalance.demo();
+    const demoSavings = 18.0;
+    const demoShop7 = 45.0;
+    final rs = heuristicRegretScore(
+      price: price,
+      monthlyIncome: income,
+      availableBalance: demoBal.available,
+      savingsRate: demoSavings,
+      shoppingLast7Days: demoShop7,
+    );
+    final verdict = pctVal < 20 ? 'buy_now' : 'wait';
     return ImpulseAnalysis(
-      regretScore: 72,
-      verdict: 'wait',
+      regretScore: rs,
+      verdict: verdict,
       comparison: 'About $pct% of your monthly income',
       emotionalInsight: 'Purchases made under excitement often lose appeal within 48 hours.',
       alternative: 'Wait 72 hours. If you still want it, buy guilt-free.',

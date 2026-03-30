@@ -6,19 +6,20 @@ import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
 
-/// Backend base URL.
-/// Override for a physical device: `flutter run --dart-define=SMARTWALLET_API_URL=http://192.168.1.5:8000`
+/// Backend base URL (no trailing slash).
+/// Physical device / another PC: `flutter run --dart-define=SMARTWALLET_API_URL=http://192.168.x.x:8000`
+/// Default uses 127.0.0.1 so it matches `uvicorn --host 127.0.0.1` on the same machine.
 String get apiRoot {
   const fromEnv = String.fromEnvironment('SMARTWALLET_API_URL', defaultValue: '');
   if (fromEnv.isNotEmpty) {
     return fromEnv.endsWith('/') ? fromEnv.substring(0, fromEnv.length - 1) : fromEnv;
   }
-  if (kIsWeb) return 'http://localhost:8000';
+  if (kIsWeb) return 'http://127.0.0.1:8000';
   switch (defaultTargetPlatform) {
     case TargetPlatform.android:
       return 'http://10.0.2.2:8000';
     default:
-      return 'http://localhost:8000';
+      return 'http://127.0.0.1:8000';
   }
 }
 
@@ -60,7 +61,7 @@ class ApiService {
             body: jsonEncode({'title': title}),
           )
           .timeout(const Duration(seconds: 15));
-      if (res.statusCode == 200) {
+      if (res.statusCode == 200 || res.statusCode == 201) {
         final j = jsonDecode(res.body) as Map<String, dynamic>;
         final id = j['id'] as int?;
         if (id != null) return (id, null);
@@ -77,7 +78,12 @@ class ApiService {
     } catch (e) {
       return (
         null,
-        'Cannot reach API at $apiRoot — use the correct URL (e.g. --dart-define=SMARTWALLET_API_URL=...) or start the backend. ($e)',
+        'Cannot reach the API at $apiRoot.\n\n'
+        '1) Start the backend (from smartwallet-ai/backend):\n'
+        '   python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000\n\n'
+        '2) On a real phone, use your PC\'s LAN IP:\n'
+        '   flutter run --dart-define=SMARTWALLET_API_URL=http://192.168.x.x:8000\n\n'
+        '($e)',
       );
     }
   }
@@ -107,7 +113,8 @@ class ApiService {
     }
   }
 
-  static Future<String?> sendChatMessage(int conversationId, String content) async {
+  /// Assistant reply text, or error message for the UI.
+  static Future<(String?, String?)> sendChatMessage(int conversationId, String content) async {
     try {
       final res = await http
           .post(
@@ -115,13 +122,22 @@ class ApiService {
             headers: _hdr(jsonBody: true),
             body: jsonEncode({'content': content}),
           )
-          .timeout(const Duration(seconds: 60));
-      if (res.statusCode != 200) return null;
+          .timeout(const Duration(seconds: 90));
+      if (res.statusCode != 200) {
+        return (
+          null,
+          _tryDetail(res.body) ?? 'Request failed (HTTP ${res.statusCode})',
+        );
+      }
       final j = jsonDecode(res.body) as Map<String, dynamic>;
       final asst = j['assistant'] as Map<String, dynamic>?;
-      return asst?['content'] as String?;
-    } catch (_) {
-      return null;
+      final text = (asst?['content'] as String?)?.trim();
+      if (text == null || text.isEmpty) {
+        return (null, 'The server returned an empty reply.');
+      }
+      return (text, null);
+    } catch (e) {
+      return (null, 'Network error: $e');
     }
   }
 
