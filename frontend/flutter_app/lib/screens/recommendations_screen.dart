@@ -4,6 +4,21 @@ import '../providers/providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
+Color _recCategoryColor(String? category, AppPalette pl) {
+  switch (category) {
+    case 'subscriptions':
+      return pl.blue;
+    case 'impulse':
+      return pl.warning;
+    case 'budgeting':
+      return const Color(0xFFC77DFF);
+    case 'savings':
+      return pl.emerald;
+    default:
+      return pl.blue;
+  }
+}
+
 class RecommendationsScreen extends StatefulWidget {
   const RecommendationsScreen({super.key});
   @override State<RecommendationsScreen> createState() => _RecommendationsScreenState();
@@ -23,9 +38,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   @override
   Widget build(BuildContext context) {
     return Consumer<RecommendationsProvider>(builder: (_, p, __) {
+      final pl = context.palette;
       return RefreshIndicator(
-        color: AppColors.emerald,
-        backgroundColor: AppColors.surface,
+        color: pl.emerald,
+        backgroundColor: pl.surface,
         onRefresh: () => p.load(),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -37,12 +53,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text('AI Recommendations 🤖',
-                        style: TextStyle(color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.w800)),
-                    SizedBox(height: 4),
+                        style: TextStyle(color: pl.textPrimary, fontSize: 22, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 4),
                     Text('Personalized actions to save money now.',
-                        style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                        style: TextStyle(color: pl.textMuted, fontSize: 13)),
                   ]),
                   EmeraldButton(label: 'Refresh', loading: p.loading, onTap: () => p.load(), small: true),
                 ],
@@ -50,17 +66,17 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               const SizedBox(height: 24),
 
               if (p.loading)
-                const Center(child: Padding(
-                  padding: EdgeInsets.all(60),
+                Center(child: Padding(
+                  padding: const EdgeInsets.all(60),
                   child: Column(children: [
-                    CircularProgressIndicator(color: AppColors.emerald),
-                    SizedBox(height: 14),
-                    Text('AI is generating your plan…', style: TextStyle(color: AppColors.textMuted)),
+                    CircularProgressIndicator(color: pl.emerald),
+                    const SizedBox(height: 14),
+                    Text('AI is generating your plan…', style: TextStyle(color: pl.textMuted)),
                   ]),
                 ))
               else if (p.recommendations.isEmpty)
-                const Center(child: Text('Pull down to load recommendations.',
-                    style: TextStyle(color: AppColors.textMuted)))
+                Center(child: Text('Pull down to load recommendations.',
+                    style: TextStyle(color: pl.textMuted)))
               else ...[
                 _TotalSavingsCard(recommendations: p.recommendations),
                 const SizedBox(height: 20),
@@ -81,6 +97,7 @@ class _TotalSavingsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pl = context.palette;
     final total = recommendations.fold<double>(0, (acc, r) => acc + r.monthlyImpact);
     final yearly = total * 12;
 
@@ -89,21 +106,21 @@ class _TotalSavingsCard extends StatelessWidget {
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [AppColors.emerald.withOpacity(0.15), AppColors.emerald.withOpacity(0.04)],
+          colors: [pl.emerald.withValues(alpha: 0.15), pl.emerald.withValues(alpha: 0.04)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.emerald.withOpacity(0.3)),
+        border: Border.all(color: pl.emerald.withValues(alpha: 0.3)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('POTENTIAL TOTAL SAVINGS',
-            style: TextStyle(color: AppColors.textMuted, fontSize: 10, letterSpacing: 1.2)),
+        Text('POTENTIAL TOTAL SAVINGS',
+            style: TextStyle(color: pl.textMuted, fontSize: 10, letterSpacing: 1.2)),
         const SizedBox(height: 8),
         Text(fmt(total),
-            style: const TextStyle(color: AppColors.emerald, fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: -1)),
+            style: TextStyle(color: pl.emerald, fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: -1)),
         Text('per month  ·  ${fmt(yearly)} per year',
-            style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+            style: TextStyle(color: pl.textSecondary, fontSize: 13)),
         const SizedBox(height: 16),
         const _ProgressRing(),
       ]),
@@ -114,12 +131,17 @@ class _TotalSavingsCard extends StatelessWidget {
 class _ProgressRing extends StatelessWidget {
   const _ProgressRing();
   @override
-  Widget build(BuildContext context) => Row(children: [
-        const Icon(Icons.trending_up, color: AppColors.emerald, size: 16),
-        const SizedBox(width: 8),
-        const Text('Follow all 3 tips to reach your savings goal faster.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-      ]);
+  Widget build(BuildContext context) {
+    final pl = context.palette;
+    return Row(children: [
+      Icon(Icons.trending_up, color: pl.emerald, size: 16),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text('Follow all 3 tips to reach your savings goal faster.',
+            style: TextStyle(color: pl.textSecondary, fontSize: 12)),
+      ),
+    ]);
+  }
 }
 
 class _RecommendationCard extends StatefulWidget {
@@ -140,17 +162,11 @@ class _RecommendationCardState extends State<_RecommendationCard> {
     'savings':       Icons.savings_outlined,
   };
 
-  static const _catColors = {
-    'subscriptions': AppColors.blue,
-    'impulse':       AppColors.warning,
-    'budgeting':     Color(0xFFC77DFF),
-    'savings':       AppColors.emerald,
-  };
-
   @override
   Widget build(BuildContext context) {
+    final pl = context.palette;
     final rec    = widget.rec;
-    final color  = _catColors[rec.category] ?? AppColors.blue;
+    final color  = _recCategoryColor(rec.category, pl);
     final icon   = _catIcons[rec.category]  ?? Icons.lightbulb_outline;
 
     return AnimatedOpacity(
@@ -161,9 +177,9 @@ class _RecommendationCardState extends State<_RecommendationCard> {
         child: Container(
           margin: const EdgeInsets.only(bottom: 14),
           decoration: BoxDecoration(
-            color: AppColors.surface,
+            color: pl.surface,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _done ? AppColors.border : color.withOpacity(0.25)),
+            border: Border.all(color: _done ? pl.border : color.withValues(alpha: 0.25)),
           ),
           child: Column(children: [
             // ── Header ──────────────────────────────────────────────────
@@ -172,13 +188,13 @@ class _RecommendationCardState extends State<_RecommendationCard> {
               child: Row(children: [
                 Container(
                   width: 44, height: 44,
-                  decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
+                  decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
                   child: Icon(icon, color: color, size: 22),
                 ),
                 const SizedBox(width: 14),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(rec.title,
-                      style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w700)),
+                      style: TextStyle(color: pl.textPrimary, fontSize: 14, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 4),
                   Row(children: [
                     DifficultyBadge(rec.difficulty),
@@ -189,8 +205,8 @@ class _RecommendationCardState extends State<_RecommendationCard> {
                 const SizedBox(width: 8),
                 Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                   Text('+${fmt(rec.monthlyImpact)}',
-                      style: const TextStyle(color: AppColors.emerald, fontWeight: FontWeight.w800, fontSize: 14)),
-                  const Text('/month', style: TextStyle(color: AppColors.textMuted, fontSize: 10)),
+                      style: TextStyle(color: pl.emerald, fontWeight: FontWeight.w800, fontSize: 14)),
+                  Text('/month', style: TextStyle(color: pl.textMuted, fontSize: 10)),
                 ]),
               ]),
             ),
@@ -207,11 +223,11 @@ class _RecommendationCardState extends State<_RecommendationCard> {
                     width: double.infinity,
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: AppColors.surfaceAlt,
+                      color: pl.surfaceAlt,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(rec.description,
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.6)),
+                        style: TextStyle(color: pl.textSecondary, fontSize: 13, height: 1.6)),
                   ),
                   const SizedBox(height: 12),
                   _AnnualImpactBar(monthlyImpact: rec.monthlyImpact, color: color),
@@ -222,13 +238,13 @@ class _RecommendationCardState extends State<_RecommendationCard> {
                       child: Container(
                         padding: const EdgeInsets.symmetric(vertical: 10),
                         decoration: BoxDecoration(
-                          color: _done ? AppColors.emeraldDim : AppColors.emerald,
+                          color: _done ? pl.emeraldDim : pl.emerald,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Center(child: Text(
                           _done ? '✓ Done!' : 'Mark as Done',
                           style: TextStyle(
-                            color: _done ? AppColors.emerald : AppColors.background,
+                            color: _done ? pl.emerald : pl.onEmerald,
                             fontWeight: FontWeight.w700, fontSize: 13,
                           ),
                         )),
@@ -252,10 +268,11 @@ class _AnnualImpactBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pl = context.palette;
     final yearly = monthlyImpact * 12;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        const Text('Annual Impact', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+        Text('Annual Impact', style: TextStyle(color: pl.textMuted, fontSize: 11)),
         Text(fmt(yearly), style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12)),
       ]),
       const SizedBox(height: 6),
@@ -264,7 +281,7 @@ class _AnnualImpactBar extends StatelessWidget {
         child: LinearProgressIndicator(
           value:            (yearly / 1000).clamp(0.05, 1.0),
           minHeight:        6,
-          backgroundColor:  AppColors.border,
+          backgroundColor:  pl.border,
           valueColor:       AlwaysStoppedAnimation(color),
         ),
       ),

@@ -24,14 +24,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return Consumer<DashboardProvider>(builder: (_, p, __) {
-      if (p.loading) return const Center(child: CircularProgressIndicator(color: AppColors.emerald));
+      final pl = context.palette;
+      if (p.loading) return Center(child: CircularProgressIndicator(color: pl.emerald));
 
       final s = p.summary;
-      if (s == null) return const Center(child: Text('No data', style: TextStyle(color: AppColors.textMuted)));
+      if (s == null) {
+        return Center(child: Text('No data', style: TextStyle(color: pl.textMuted)));
+      }
 
       return RefreshIndicator(
-        color: AppColors.emerald,
-        backgroundColor: AppColors.surface,
+        color: pl.emerald,
+        backgroundColor: pl.surface,
         onRefresh: () => p.load(),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -40,10 +43,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── Greeting ──────────────────────────────────────────────────
-              Text(timeBasedGreeting(), style: const TextStyle(color: AppColors.textMuted, fontSize: 14)),
+              Text(
+                timeBasedGreeting(name: context.watch<AuthProvider>().name),
+                style: TextStyle(color: pl.textMuted, fontSize: 14),
+              ),
               const SizedBox(height: 4),
-              const Text("Here's your money pulse.",
-                  style: TextStyle(color: AppColors.textPrimary, fontSize: 24, fontWeight: FontWeight.w800)),
+              Text("Here's your money pulse.",
+                  style: TextStyle(color: pl.textPrimary, fontSize: 24, fontWeight: FontWeight.w800)),
               const SizedBox(height: 24),
 
               // ── Balance Hero Card ──────────────────────────────────────────
@@ -54,7 +60,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Row(children: [
                 Expanded(child: StatCard(label: 'Monthly Spend', value: fmt(s.totalSpend))),
                 const SizedBox(width: 12),
-                Expanded(child: StatCard(label: 'Savings Rate', value: '${s.savingsRate.toStringAsFixed(1)}%', accent: AppColors.warning)),
+                Expanded(child: StatCard(label: 'Savings Rate', value: '${s.savingsRate.toStringAsFixed(1)}%', accent: pl.warning)),
               ]),
               const SizedBox(height: 28),
 
@@ -85,6 +91,7 @@ class _BalanceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pl = context.palette;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
@@ -95,16 +102,16 @@ class _BalanceCard extends StatelessWidget {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.emerald.withOpacity(0.3)),
+        border: Border.all(color: pl.emerald.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Available Balance',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12, letterSpacing: 1)),
+          Text('Available Balance',
+              style: TextStyle(color: pl.textMuted, fontSize: 12, letterSpacing: 1)),
           const SizedBox(height: 8),
           Text(fmt(balance.available),
-              style: const TextStyle(color: AppColors.emerald, fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: -1)),
+              style: TextStyle(color: pl.emerald, fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: -1)),
           const SizedBox(height: 16),
           Row(children: [
             _BalancePill(label: 'Current', value: fmt(balance.current)),
@@ -123,21 +130,24 @@ class _BalancePill extends StatelessWidget {
   const _BalancePill({required this.label, required this.value, this.highlight = false});
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) {
+    final pl = context.palette;
+    return Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: highlight ? AppColors.emeraldDim : AppColors.surface.withOpacity(0.6),
+          color: highlight ? pl.emeraldDim : pl.surface.withValues(alpha: 0.6),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Row(children: [
-          Text('$label: ', style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          Text('$label: ', style: TextStyle(color: pl.textMuted, fontSize: 12)),
           Text(value,
               style: TextStyle(
-                  color: highlight ? AppColors.emerald : AppColors.textPrimary,
+                  color: highlight ? pl.emerald : pl.textPrimary,
                   fontSize: 12,
                   fontWeight: FontWeight.w700)),
         ]),
       );
+  }
 }
 
 class _SpendingChart extends StatelessWidget {
@@ -146,17 +156,18 @@ class _SpendingChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pl = context.palette;
     final items = categories.take(5).toList();
     if (items.isEmpty) {
       return Container(
         height: 120,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: pl.surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.border),
+          border: Border.all(color: pl.border),
         ),
-        child: const Text('No category data yet', style: TextStyle(color: AppColors.textMuted)),
+        child: Text('No category data yet', style: TextStyle(color: pl.textMuted)),
       );
     }
 
@@ -164,9 +175,9 @@ class _SpendingChart extends StatelessWidget {
       height: 220,
       padding: const EdgeInsets.fromLTRB(8, 20, 16, 8),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: pl.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: pl.border),
       ),
       child: BarChart(
         BarChartData(
@@ -174,14 +185,13 @@ class _SpendingChart extends StatelessWidget {
           maxY: items.map((c) => (c.benchmark as double) * 1.2).reduce((a, b) => a > b ? a : b),
           barTouchData: BarTouchData(
             touchTooltipData: BarTouchTooltipData(
-              getTooltipColor: (_) => AppColors.surfaceAlt,
+              getTooltipColor: (_) => pl.surfaceAlt,
               getTooltipItem: (group, _, rod, rodIndex) {
-                final c = items[group.x];
                 final label = rodIndex == 0 ? 'Spent' : 'Budget';
                 final value = rod.toY;
                 return BarTooltipItem(
                   '$label: ${fmt(value)}',
-                  TextStyle(color: rodIndex == 0 ? AppColors.danger : AppColors.emerald, fontSize: 11),
+                  TextStyle(color: rodIndex == 0 ? pl.danger : pl.emerald, fontSize: 11),
                 );
               },
             ),
@@ -194,7 +204,7 @@ class _SpendingChart extends StatelessWidget {
                   final name = (items[v.toInt()].category as String).split(' ').first;
                   return Padding(
                     padding: const EdgeInsets.only(top: 6),
-                    child: Text(name, style: const TextStyle(color: AppColors.textMuted, fontSize: 10)),
+                    child: Text(name, style: TextStyle(color: pl.textMuted, fontSize: 10)),
                   );
                 },
               ),
@@ -204,7 +214,7 @@ class _SpendingChart extends StatelessWidget {
                 showTitles: true,
                 reservedSize: 44,
                 getTitlesWidget: (v, _) => Text('\$${v.toInt()}',
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 9)),
+                    style: TextStyle(color: pl.textMuted, fontSize: 9)),
               ),
             ),
             topTitles:   const AxisTitles(sideTitles: SideTitles(showTitles: false)),
@@ -213,7 +223,7 @@ class _SpendingChart extends StatelessWidget {
           gridData: FlGridData(
             show: true,
             drawVerticalLine: false,
-            getDrawingHorizontalLine: (_) => const FlLine(color: AppColors.border, strokeWidth: 0.5),
+            getDrawingHorizontalLine: (_) => FlLine(color: pl.border, strokeWidth: 0.5),
           ),
           borderData: FlBorderData(show: false),
           barGroups: items.asMap().entries.map((e) {
@@ -222,13 +232,13 @@ class _SpendingChart extends StatelessWidget {
             return BarChartGroupData(x: i, barRods: [
               BarChartRodData(
                 toY:       c.spent,
-                color:     c.overBudget ? AppColors.danger : AppColors.blue,
+                color:     c.overBudget ? pl.danger : pl.blue,
                 width:     10,
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
               ),
               BarChartRodData(
                 toY:       c.benchmark,
-                color:     AppColors.emerald.withOpacity(0.5),
+                color:     pl.emerald.withValues(alpha: 0.5),
                 width:     10,
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
               ),
@@ -245,21 +255,24 @@ class _OverBudgetTile extends StatelessWidget {
   const _OverBudgetTile(this.category);
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) {
+    final pl = context.palette;
+    return Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: AppColors.dangerDim,
+          color: pl.dangerDim,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.danger.withOpacity(0.3)),
+          border: Border.all(color: pl.danger.withValues(alpha: 0.3)),
         ),
         child: Row(children: [
-          const Icon(Icons.warning_amber_rounded, color: AppColors.danger, size: 18),
+          Icon(Icons.warning_amber_rounded, color: pl.danger, size: 18),
           const SizedBox(width: 10),
           Expanded(
             child: Text('${category.category} — ${fmt(category.spent)} spent vs ${fmt(category.benchmark)} budget',
-                style: const TextStyle(color: AppColors.textPrimary, fontSize: 13)),
+                style: TextStyle(color: pl.textPrimary, fontSize: 13)),
           ),
         ]),
       );
+  }
 }

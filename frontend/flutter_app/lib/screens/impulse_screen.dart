@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import '../theme.dart';
+import 'settings_screen.dart';
 
 /// Impulse Buy Analysis — layout matches product mockup (dark cards, amber analyze, regret ring, impact, cooldown).
 class ImpulseScreen extends StatefulWidget {
@@ -20,12 +21,17 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
   static const _analyzeAmber = Color(0xFFFFB347);
   static const _riskRed = Color(0xFFFF4D4D);
   static const _impactGold = Color(0xFFE8C547);
+  static const _cooldownSeconds = 30;
 
   final _itemCtrl = TextEditingController(text: 'headphones');
   final _priceCtrl = TextEditingController(text: '90');
   final _merchantCtrl = TextEditingController(text: 'Amazon');
   Timer? _debounce;
   bool _debounceEnabled = false;
+  ImpulseProvider? _impulseListenTarget;
+  Timer? _cooldownTimer;
+  int _cooldownRemaining = 0;
+  ImpulseAnalysis? _cooldownForAnalysis;
 
   @override
   void initState() {
@@ -41,6 +47,65 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
     _merchantCtrl.addListener(_scheduleDebouncedCheck);
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final impulse = context.read<ImpulseProvider>();
+    if (!identical(_impulseListenTarget, impulse)) {
+      _impulseListenTarget?.removeListener(_onImpulseForCooldown);
+      _impulseListenTarget = impulse;
+      impulse.addListener(_onImpulseForCooldown);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _onImpulseForCooldown();
+      });
+    }
+  }
+
+  void _onImpulseForCooldown() {
+    final prov = _impulseListenTarget;
+    if (prov == null || !mounted) return;
+    if (prov.analysis == null) {
+      _cancelCooldownTimer();
+      if (_cooldownRemaining != 0 || _cooldownForAnalysis != null) {
+        setState(() {
+          _cooldownRemaining = 0;
+          _cooldownForAnalysis = null;
+        });
+      }
+      return;
+    }
+    if (prov.loading) return;
+    if (identical(prov.analysis, _cooldownForAnalysis)) return;
+    _startCooldown(prov.analysis!);
+  }
+
+  void _cancelCooldownTimer() {
+    _cooldownTimer?.cancel();
+    _cooldownTimer = null;
+  }
+
+  void _startCooldown(ImpulseAnalysis analysis) {
+    _cancelCooldownTimer();
+    setState(() {
+      _cooldownForAnalysis = analysis;
+      _cooldownRemaining = _cooldownSeconds;
+    });
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() {
+        _cooldownRemaining--;
+        if (_cooldownRemaining <= 0) {
+          _cooldownRemaining = 0;
+          t.cancel();
+          _cooldownTimer = null;
+        }
+      });
+    });
+  }
+
   void _scheduleDebouncedCheck() {
     if (!_debounceEnabled) return;
     _debounce?.cancel();
@@ -54,6 +119,8 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
 
   @override
   void dispose() {
+    _impulseListenTarget?.removeListener(_onImpulseForCooldown);
+    _cancelCooldownTimer();
     _debounce?.cancel();
     for (final c in [_itemCtrl, _priceCtrl, _merchantCtrl]) {
       c.removeListener(_scheduleDebouncedCheck);
@@ -62,13 +129,50 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
     super.dispose();
   }
 
-  void _runCheck() {
+  Future<void> _showImpulseLimitReached(BuildContext context) async {
+    final pal = context.palette;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: pal.surfaceAlt,
+        title: Text('Monthly limit reached', style: TextStyle(color: pal.textPrimary, fontWeight: FontWeight.w800)),
+        content: Text(
+          'Free accounts get ${EntitlementsNotifier.freeImpulseChecksPerMonth} “Can I afford this?” checks per month. '
+          'SmartWallet Premium includes unlimited checks, purchase risk scores, budget-impact context, and the AI Financial Coach.',
+          style: TextStyle(color: pal.textSecondary, height: 1.4, fontSize: 14),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: pal.emerald, foregroundColor: pal.onEmerald),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+            },
+            child: const Text('View Premium'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runCheck() async {
     final price = double.tryParse(_priceCtrl.text.replaceAll(',', '')) ?? 0;
     if (price <= 0) return;
+    final ent = context.read<EntitlementsNotifier>();
+    if (!ent.canRunImpulseCheck) {
+      if (!mounted) return;
+      await _showImpulseLimitReached(context);
+      return;
+    }
     final item = _itemCtrl.text.trim().isEmpty ? 'this purchase' : _itemCtrl.text.trim();
     final merchant = _merchantCtrl.text.trim();
     final desc = merchant.isEmpty ? item : '$item · $merchant';
-    context.read<ImpulseProvider>().check(desc, price);
+    await context.read<ImpulseProvider>().check(desc, price);
+    if (!mounted) return;
+    if (context.read<ImpulseProvider>().analysis != null) {
+      await ent.recordImpulseCheckConsumed();
+    }
   }
 
   double _priceValue() => double.tryParse(_priceCtrl.text.replaceAll(',', '')) ?? 0;
@@ -86,10 +190,10 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
     return 'Lower Risk';
   }
 
-  Color _riskColor(int score) {
+  Color _riskColor(int score, AppPalette pal) {
     if (score >= 70) return _riskRed;
     if (score >= 45) return _impactGold;
-    return AppColors.emerald;
+    return pal.emerald;
   }
 
   String _aiAnalysisBody(ImpulseAnalysis a) {
@@ -98,36 +202,40 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
     return a.alternative.trim();
   }
 
-  InputDecoration _fieldDeco(String label) => InputDecoration(
+  /// Matches UI risk bands: moderate (45+) and high (70+) → stronger proceed warning.
+  bool _isHighImpulseRisk(ImpulseAnalysis a) => a.regretScore >= 45;
+
+  InputDecoration _fieldDeco(String label, AppPalette pal) => InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-        floatingLabelStyle: const TextStyle(color: AppColors.textSecondary),
-        hintStyle: const TextStyle(color: AppColors.textMuted),
+        labelStyle: TextStyle(color: pal.textMuted, fontSize: 13),
+        floatingLabelStyle: TextStyle(color: pal.textSecondary),
+        hintStyle: TextStyle(color: pal.textMuted),
         filled: true,
-        fillColor: AppColors.background,
+        fillColor: pal.background,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderSide: BorderSide(color: pal.border),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderSide: BorderSide(color: pal.border),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.emerald, width: 1.2),
+          borderSide: BorderSide(color: pal.emerald, width: 1.2),
         ),
       );
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ImpulseProvider>(builder: (_, p, __) {
+    return Consumer<ImpulseProvider>(builder: (_, prov, __) {
+      final pal = context.palette;
       final wide = MediaQuery.sizeOf(context).width >= 720;
       final price = _priceValue();
       final delayDays = _goalDelayDays(price > 0 ? price : 90);
-      final analysis = p.analysis;
+      final analysis = prov.analysis;
       final score = analysis?.regretScore ?? 0;
-      final riskColor = _riskColor(score);
+      final riskColor = _riskColor(score, pal);
 
       Widget purchaseCard() => _ImpulseCard(
             child: Column(
@@ -135,12 +243,12 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.shield_moon_outlined, color: AppColors.emerald.withValues(alpha: 0.9), size: 22),
+                    Icon(Icons.shield_moon_outlined, color: pal.emerald.withValues(alpha: 0.9), size: 22),
                     const SizedBox(width: 10),
                     Text(
                       'Purchase Details',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: AppColors.textPrimary,
+                            color: pal.textPrimary,
                             fontWeight: FontWeight.w800,
                           ),
                     ),
@@ -149,21 +257,21 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                 const SizedBox(height: 18),
                 TextField(
                   controller: _itemCtrl,
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: _fieldDeco('What are you buying?'),
+                  style: TextStyle(color: pal.textPrimary),
+                  decoration: _fieldDeco('What are you buying?', pal),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _priceCtrl,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: _fieldDeco('Price (\$)'),
+                  style: TextStyle(color: pal.textPrimary),
+                  decoration: _fieldDeco('Price (\$)', pal),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _merchantCtrl,
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: _fieldDeco('Merchant'),
+                  style: TextStyle(color: pal.textPrimary),
+                  decoration: _fieldDeco('Merchant', pal),
                 ),
                 const SizedBox(height: 20),
                 SizedBox(
@@ -175,8 +283,8 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    onPressed: p.loading || price <= 0 ? null : _runCheck,
-                    icon: p.loading
+                    onPressed: prov.loading || price <= 0 ? null : _runCheck,
+                    icon: prov.loading
                         ? const SizedBox(
                             width: 20,
                             height: 20,
@@ -184,7 +292,7 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                           )
                         : const Icon(Icons.auto_awesome_rounded, size: 20),
                     label: Text(
-                      p.loading ? 'Analyzing…' : 'Analyze Purchase',
+                      prov.loading ? 'Analyzing…' : 'Analyze Purchase',
                       style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
                     ),
                   ),
@@ -197,12 +305,12 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const Align(
+                Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
                     'REGRET PROBABILITY',
                     style: TextStyle(
-                      color: AppColors.textMuted,
+                      color: pal.textMuted,
                       fontSize: 10,
                       letterSpacing: 1.3,
                       fontWeight: FontWeight.w700,
@@ -210,10 +318,10 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                if (p.loading)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 40),
-                    child: CircularProgressIndicator(color: AppColors.emerald),
+                if (prov.loading)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 40),
+                    child: CircularProgressIndicator(color: pal.emerald),
                   )
                 else if (analysis == null)
                   Padding(
@@ -221,7 +329,7 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                     child: Text(
                       'Run an analysis to see your regret probability.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textMuted.withValues(alpha: 0.9), fontSize: 14),
+                      style: TextStyle(color: pal.textMuted.withValues(alpha: 0.9), fontSize: 14),
                     ),
                   )
                 else
@@ -241,20 +349,20 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                 Text(
                   'Financial Impact',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: AppColors.textPrimary,
+                        color: pal.textPrimary,
                         fontWeight: FontWeight.w800,
                       ),
                 ),
                 const SizedBox(height: 16),
-                if (p.loading)
-                  const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Center(child: CircularProgressIndicator(color: AppColors.emerald)),
+                if (prov.loading)
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Center(child: CircularProgressIndicator(color: pal.emerald)),
                   )
                 else if (analysis == null)
                   Text(
                     'Impact appears after you analyze a purchase.',
-                    style: TextStyle(color: AppColors.textMuted.withValues(alpha: 0.9), fontSize: 13),
+                    style: TextStyle(color: pal.textMuted.withValues(alpha: 0.9), fontSize: 13),
                   )
                 else ...[
                   Row(
@@ -285,29 +393,29 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     decoration: BoxDecoration(
-                      color: AppColors.emeraldDim,
+                      color: pal.emeraldDim,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.border),
+                      border: Border.all(color: pal.border),
                     ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.track_changes_rounded, color: AppColors.emerald, size: 22),
+                        Icon(Icons.track_changes_rounded, color: pal.emerald, size: 22),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text.rich(
                             TextSpan(
-                              style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.4),
+                              style: TextStyle(color: pal.textSecondary, fontSize: 13, height: 1.4),
                               children: [
-                                const TextSpan(text: 'Buying this delays your '),
-                                const TextSpan(
+                                TextSpan(text: 'Buying this delays your '),
+                                TextSpan(
                                   text: 'Vacation Fund',
-                                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w800),
+                                  style: TextStyle(color: pal.textPrimary, fontWeight: FontWeight.w800),
                                 ),
-                                const TextSpan(text: ' goal by '),
+                                TextSpan(text: ' goal by '),
                                 TextSpan(
                                   text: '$delayDays days',
-                                  style: TextStyle(color: AppColors.emerald, fontWeight: FontWeight.w800),
+                                  style: TextStyle(color: pal.emerald, fontWeight: FontWeight.w800),
                                 ),
                               ],
                             ),
@@ -317,10 +425,10 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  const Text(
+                  Text(
                     'AI ANALYSIS',
                     style: TextStyle(
-                      color: AppColors.textMuted,
+                      color: pal.textMuted,
                       fontSize: 10,
                       letterSpacing: 1.3,
                       fontWeight: FontWeight.w700,
@@ -329,7 +437,7 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                   const SizedBox(height: 8),
                   Text(
                     _aiAnalysisBody(analysis),
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.5),
+                    style: TextStyle(color: pal.textSecondary, fontSize: 14, height: 1.5),
                   ),
                 ],
               ],
@@ -343,45 +451,95 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.timer_outlined, color: AppColors.textSecondary.withValues(alpha: 0.95), size: 22),
+                    Icon(Icons.timer_outlined, color: pal.textSecondary.withValues(alpha: 0.95), size: 22),
                     const SizedBox(width: 8),
                     Text(
                       'Cooldown Timer',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: AppColors.textPrimary,
+                            color: pal.textPrimary,
                             fontWeight: FontWeight.w800,
                           ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 20),
-                if (analysis == null && !p.loading)
+                if (analysis == null && !prov.loading)
                   Text(
                     'Analyze a purchase to see your cooldown status.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.textMuted.withValues(alpha: 0.9), fontSize: 13),
+                    style: TextStyle(color: pal.textMuted.withValues(alpha: 0.9), fontSize: 13),
                   )
-                else if (p.loading)
+                else if (prov.loading)
                   const SizedBox.shrink()
+                else if (_cooldownForAnalysis == analysis && _cooldownRemaining > 0) ...[
+                  SizedBox(
+                    width: 132,
+                    height: 132,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        SizedBox(
+                          width: 132,
+                          height: 132,
+                          child: CircularProgressIndicator(
+                            value: (_cooldownSeconds - _cooldownRemaining) / _cooldownSeconds,
+                            strokeWidth: 7,
+                            backgroundColor: pal.border.withValues(alpha: 0.45),
+                            color: pal.emerald,
+                            strokeCap: StrokeCap.round,
+                          ),
+                        ),
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '$_cooldownRemaining',
+                              style: TextStyle(
+                                color: pal.textPrimary,
+                                fontSize: 40,
+                                fontWeight: FontWeight.w900,
+                                height: 1,
+                              ),
+                            ),
+                            Text(
+                              'sec left',
+                              style: TextStyle(
+                                color: pal.textMuted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Take a breath — cooldown before you buy.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: pal.textSecondary.withValues(alpha: 0.95), fontSize: 14, height: 1.35),
+                  ),
+                ]
                 else ...[
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: AppColors.emeraldDim,
+                      color: pal.emeraldDim,
                       shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.emerald.withValues(alpha: 0.35)),
+                      border: Border.all(color: pal.emerald.withValues(alpha: 0.35)),
                     ),
-                    child: const Icon(Icons.check_rounded, color: AppColors.emerald, size: 36),
+                    child: Icon(Icons.check_rounded, color: pal.emerald, size: 36),
                   ),
                   const SizedBox(height: 14),
-                  const Text(
+                  Text(
                     'Cooldown Complete',
-                    style: TextStyle(color: AppColors.textPrimary, fontSize: 17, fontWeight: FontWeight.w800),
+                    style: TextStyle(color: pal.textPrimary, fontSize: 17, fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     'Still want to proceed?',
-                    style: TextStyle(color: AppColors.textMuted.withValues(alpha: 0.95), fontSize: 14),
+                    style: TextStyle(color: pal.textMuted.withValues(alpha: 0.95), fontSize: 14),
                   ),
                   const SizedBox(height: 20),
                   Row(
@@ -389,8 +547,8 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                       Expanded(
                         child: OutlinedButton(
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.textPrimary,
-                            side: const BorderSide(color: AppColors.border),
+                            foregroundColor: pal.textPrimary,
+                            side: BorderSide(color: pal.border),
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
@@ -398,9 +556,12 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                             context.read<ImpulseProvider>().reset();
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: const Text('Purchase cancelled — take a breath.'),
+                                content: const Text(
+                                  'Congratulations, you are on track with your monthly plan!',
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                                ),
                                 behavior: SnackBarBehavior.floating,
-                                backgroundColor: AppColors.surfaceAlt,
+                                backgroundColor: Color(0xFF1E2A24),
                               ),
                             );
                           },
@@ -411,17 +572,23 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                       Expanded(
                         child: FilledButton(
                           style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.emerald,
-                            foregroundColor: AppColors.background,
+                            backgroundColor: pal.emerald,
+                            foregroundColor: pal.onEmerald,
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
                           onPressed: () {
+                            final high = _isHighImpulseRisk(analysis!);
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: const Text('If you buy, do it intentionally — not on autopilot.'),
+                                content: Text(
+                                  high
+                                      ? 'High regret risk—Do not say I did not warn you.'
+                                      : 'Lower risk—still align with your monthly plan and archive those goals.',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                                ),
                                 behavior: SnackBarBehavior.floating,
-                                backgroundColor: AppColors.surfaceAlt,
+                                backgroundColor: const Color(0xFF1E2A24),
                               ),
                             );
                           },
@@ -487,7 +654,7 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                 Text(
                   'Impulse Buy Analysis',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        color: AppColors.textPrimary,
+                        color: pal.textPrimary,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.5,
                       ),
@@ -495,7 +662,38 @@ class _ImpulseScreenState extends State<ImpulseScreen> {
                 const SizedBox(height: 6),
                 Text(
                   'Review regret risk, impact on goals, and take a beat before you buy.',
-                  style: TextStyle(color: AppColors.textMuted.withValues(alpha: 0.95), fontSize: 13, height: 1.35),
+                  style: TextStyle(color: pal.textMuted.withValues(alpha: 0.95), fontSize: 13, height: 1.35),
+                ),
+                Consumer<EntitlementsNotifier>(
+                  builder: (_, ent, __) {
+                    if (ent.isPremium) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: pal.emeraldDim,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: pal.emerald.withValues(alpha: 0.28)),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.lightbulb_outline_rounded, color: pal.emerald, size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '${ent.remainingFreeImpulseChecks} of ${EntitlementsNotifier.freeImpulseChecksPerMonth} free '
+                                '“Can I afford this?” checks left this month. Premium: unlimited analyses + AI Financial Coach.',
+                                style: TextStyle(color: pal.textSecondary, fontSize: 12, height: 1.35),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
@@ -514,13 +712,14 @@ class _ImpulseCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = context.palette;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: p.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: p.border),
       ),
       child: child,
     );
@@ -544,12 +743,13 @@ class _MiniStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = context.palette;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.background,
+        color: p.background,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: p.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -558,7 +758,7 @@ class _MiniStat extends StatelessWidget {
           const SizedBox(height: 10),
           Text(value, style: TextStyle(color: valueColor, fontSize: 18, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
-          Text(caption, style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          Text(caption, style: TextStyle(color: p.textMuted, fontSize: 12)),
         ],
       ),
     );
@@ -579,6 +779,7 @@ class _RegretRing extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = score.clamp(0, 100);
+    final p = context.palette;
     return SizedBox(
       width: 200,
       height: 200,
@@ -590,8 +791,8 @@ class _RegretRing extends StatelessWidget {
             painter: _RegretRingPainter(
               progress: s / 100.0,
               riskColor: riskColor,
-              trackColor: AppColors.border,
-              accentBlue: const Color(0xFF6BCBFF),
+              trackColor: p.border,
+              accentBlue: p.blue,
             ),
           ),
           Column(

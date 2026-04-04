@@ -13,7 +13,8 @@ security = HTTPBearer(auto_error=False)
 
 
 def auth_enabled() -> bool:
-    return os.getenv("AUTH_ENABLED", "false").lower() == "true"
+    # Default to "true" so real user accounts are used unless explicitly disabled for demos.
+    return os.getenv("AUTH_ENABLED", "true").lower() == "true"
 
 
 def _demo_user(db: Session) -> schemas.User | None:
@@ -42,8 +43,7 @@ def get_current_user(
             raise HTTPException(status_code=401, detail="User not found")
         return user
 
-    # No Bearer token: optional fallback to demo (Flutter app has no login; physical devices often have no JWT).
-    # Production: set ALLOW_ANONYMOUS_DEMO=false to require JWT whenever AUTH_ENABLED=true.
+    # No Bearer token: optional fallback to demo user id 1 (dev / no-login app builds).
     if os.getenv("ALLOW_ANONYMOUS_DEMO", "true").lower() == "true":
         u = _demo_user(db)
         if u:

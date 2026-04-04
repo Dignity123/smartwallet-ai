@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../models/models.dart';
 
@@ -24,30 +25,68 @@ String get apiRoot {
 }
 
 class ApiService {
+  static String get apiRootValue => apiRoot;
   static String get _base => '$apiRoot/api';
   static int userId = 1;
   static String? userEmail;
   static String? userName;
+  static String? accessToken;
 
   static Map<String, String> _hdr({bool jsonBody = false}) {
     final h = <String, String>{};
     if (jsonBody) h['Content-Type'] = 'application/json';
+    final t = accessToken;
+    if (t != null && t.trim().isNotEmpty) {
+      h['Authorization'] = 'Bearer $t';
+    }
     return h;
   }
 
-  /// Loads the current user from `/api/auth/me` when the API allows anonymous access (AUTH_ENABLED=false).
-  /// No login screen — the backend uses the demo user by default.
-  static Future<void> fetchProfile() async {
+  // For screens that need direct URLs + headers (settings/debug).
+  static Map<String, String> debugHeaders() => _hdr();
+
+  static void setAccessToken(String? token) {
+    accessToken = token?.trim().isEmpty == true ? null : token?.trim();
+  }
+
+  static int _coerceInt(dynamic v, [int fallback = 1]) {
+    if (v == null) return fallback;
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v.toString()) ?? fallback;
+  }
+
+  /// Loads the current user from `/api/auth/me` (JWT required when AUTH_ENABLED=true).
+  static Future<bool> fetchProfile({Duration timeout = const Duration(seconds: 15)}) async {
     try {
       final res = await http
           .get(Uri.parse('$_base/auth/me'), headers: _hdr())
-          .timeout(const Duration(seconds: 5));
-      if (res.statusCode != 200) return;
+          .timeout(timeout);
+      if (res.statusCode != 200) return false;
       final j = jsonDecode(res.body) as Map<String, dynamic>;
-      userId = j['id'] as int? ?? userId;
+      userId = _coerceInt(j['id'], userId);
       userEmail = j['email'] as String?;
       userName = j['name'] as String?;
-    } catch (_) {}
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Two quick attempts help flaky emulators / slow Wi‑Fi right after login.
+  static Future<bool> fetchProfileWithRetry({int attempts = 2}) async {
+    for (var i = 0; i < attempts; i++) {
+      if (await fetchProfile()) return true;
+      if (i < attempts - 1) await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+    return false;
+  }
+
+  static Future<void> logout() async {
+    setAccessToken(null);
+    userEmail = null;
+    userName = null;
+    userId = 1;
   }
 
   // ── Chat ─────────────────────────────────────────────────────────────────
@@ -92,7 +131,24 @@ class ApiService {
   static String? _tryDetail(String body) {
     try {
       final j = jsonDecode(body);
-      if (j is Map && j['detail'] != null) return j['detail'].toString();
+      if (j is! Map) return null;
+      final d = j['detail'];
+      if (d == null) return null;
+      if (d is String) return d;
+      if (d is List) {
+        final parts = <String>[];
+        for (final item in d) {
+          if (item is Map && item['msg'] != null) {
+            final loc = item['loc'];
+            final where = loc is List && loc.length > 1 ? '${loc.last}: ' : '';
+            parts.add('$where${item['msg']}');
+          } else {
+            parts.add(item.toString());
+          }
+        }
+        return parts.join('; ');
+      }
+      return d.toString();
     } catch (_) {}
     return null;
   }
@@ -484,11 +540,19 @@ class ApiService {
 
   static Future<String?> createPlaidLinkToken() async {
     try {
+      String? pkg;
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        try {
+          pkg = (await PackageInfo.fromPlatform()).packageName;
+        } catch (_) {}
+      }
       final res = await http
           .post(
             Uri.parse('$_base/plaid/link-token'),
             headers: _hdr(jsonBody: true),
-            body: jsonEncode({}),
+            body: jsonEncode({
+              if (pkg != null && pkg.trim().isNotEmpty) 'android_package_name': pkg.trim(),
+            }),
           )
           .timeout(const Duration(seconds: 15));
       if (res.statusCode != 200) return null;
@@ -535,6 +599,154 @@ class ApiService {
               'amount_snapshot': amount,
             }),
           )
+          .timeout(const Duration(seconds: 10));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<List<String>> fetchExpenseCategories() async {
+    try {
+      final res =
+          await http.get(Uri.parse('$_base/transactions/categories'), headers: _hdr()).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return [];
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = j['categories'] as List? ?? [];
+      return list.map((e) => e.toString()).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>?> addManualExpense({
+    required double amount,
+    required String merchant,
+    String? category,
+    String? notes,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_base/transactions/$userId/manual'),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode({
+              'amount': amount,
+              'merchant': merchant,
+              if (category != null && category.isNotEmpty) 'category': category,
+              if (notes != null && notes.isNotEmpty) 'notes': notes,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return null;
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchTransactionHistory({int days = 90, int limit = 200}) async {
+    try {
+      final uri = Uri.parse('$_base/transactions/$userId/history').replace(
+        queryParameters: {'days': '$days', 'limit': '$limit', 'offset': '0'},
+      );
+      final res = await http.get(uri, headers: _hdr()).timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return [];
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = j['transactions'] as List? ?? [];
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<bool> updateTransactionCategory(int transactionId, String category) async {
+    try {
+      final res = await http
+          .patch(
+            Uri.parse('$_base/transactions/$userId/$transactionId/category'),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode({'category': category}),
+          )
+          .timeout(const Duration(seconds: 10));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> fetchSpendingAnalytics({int days = 90}) async {
+    try {
+      final uri = Uri.parse('$_base/transactions/$userId/analytics').replace(queryParameters: {'days': '$days'});
+      final res = await http.get(uri, headers: _hdr()).timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return null;
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchSavingsGoals() async {
+    try {
+      final res = await http.get(Uri.parse('$_base/savings-goals/$userId'), headers: _hdr()).timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return [];
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = j['goals'] as List? ?? [];
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>?> createSavingsGoal({
+    required String name,
+    required double target,
+    double saved = 0,
+    int? iconCodePoint,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_base/savings-goals/$userId'),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode({
+              'name': name,
+              'target_amount': target,
+              'saved_amount': saved,
+              if (iconCodePoint != null) 'icon_code_point': iconCodePoint,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return null;
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> updateSavingsGoal(int goalId, {double? savedAmount, double? targetAmount, String? name}) async {
+    try {
+      final body = <String, dynamic>{};
+      if (savedAmount != null) body['saved_amount'] = savedAmount;
+      if (targetAmount != null) body['target_amount'] = targetAmount;
+      if (name != null) body['name'] = name;
+      final res = await http
+          .patch(
+            Uri.parse('$_base/savings-goals/$userId/$goalId'),
+            headers: _hdr(jsonBody: true),
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 10));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> deleteSavingsGoal(int goalId) async {
+    try {
+      final res = await http
+          .delete(Uri.parse('$_base/savings-goals/$userId/$goalId'), headers: _hdr())
           .timeout(const Duration(seconds: 10));
       return res.statusCode == 200;
     } catch (_) {

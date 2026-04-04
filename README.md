@@ -54,7 +54,8 @@ Create a `.env` file in `backend/` (optional values shown):
 | `JWT_SECRET` | Required when issuing/validating tokens |
 | `ALLOW_ANONYMOUS_DEMO` | When `AUTH_ENABLED=true`, allow no JWT and fall back to user id `1` (default `true` — turn off in production) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_IDS` | For `/api/auth/google` |
-| `PLAID_CLIENT_ID`, `PLAID_SECRET`, … | Plaid link + sync |
+| `PLAID_ENV`, `PLAID_CLIENT_ID`, `PLAID_SECRET` | Plaid Link + sync |
+| `PLAID_WEBHOOK_URL` | Optional default webhook attached to new Link tokens |
 
 ### Demo user
 

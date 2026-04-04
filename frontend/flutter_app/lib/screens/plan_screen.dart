@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:plaid_flutter/plaid_flutter.dart';
+import 'dart:async';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
@@ -16,9 +17,9 @@ class PlanScreen extends StatefulWidget {
 }
 
 class _PlanScreenState extends State<PlanScreen> {
-  final _catCtrl = TextEditingController(text: 'Groceries');
-  final _limitCtrl = TextEditingController(text: '400');
-  final _plaidCtrl = TextEditingController();
+  StreamSubscription<LinkSuccess>? _plaidSuccess;
+  StreamSubscription<LinkExit>? _plaidExit;
+  StreamSubscription<LinkEvent>? _plaidEvent;
 
   @override
   void initState() {
@@ -26,40 +27,72 @@ class _PlanScreenState extends State<PlanScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<PlanProvider>().refresh();
     });
+    _plaidSuccess = PlaidLink.onSuccess.listen((s) async {
+      if (!mounted) return;
+      final p = context.read<PlanProvider>();
+      final ok = await p.linkPlaidViaPublicToken(s.publicToken);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ok ? 'Bank linked' : 'Bank link failed'), behavior: SnackBarBehavior.floating),
+      );
+    });
+    _plaidExit = PlaidLink.onExit.listen((e) {
+      if (!mounted) return;
+      if (e.error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.error?.displayMessage ?? 'Plaid exited'), behavior: SnackBarBehavior.floating),
+        );
+      }
+    });
+    _plaidEvent = PlaidLink.onEvent.listen((_) {});
   }
 
   @override
   void dispose() {
-    _catCtrl.dispose();
-    _limitCtrl.dispose();
-    _plaidCtrl.dispose();
+    _plaidSuccess?.cancel();
+    _plaidExit?.cancel();
+    _plaidEvent?.cancel();
     super.dispose();
+  }
+
+  Future<void> _openPlaidLink(PlanProvider p) async {
+    final token = await p.requestPlaidLink();
+    if (!mounted) return;
+    if (token == null || token.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Plaid not configured on server'), behavior: SnackBarBehavior.floating),
+      );
+      return;
+    }
+    await PlaidLink.create(configuration: LinkTokenConfiguration(token: token));
+    await PlaidLink.open();
   }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<PlanProvider>(builder: (_, p, __) {
+      final pl = context.palette;
       return RefreshIndicator(
-        color: AppColors.emerald,
-        backgroundColor: AppColors.surface,
+        color: pl.emerald,
+        backgroundColor: pl.surface,
         onRefresh: () => p.refresh(),
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            const Text('Plan & protect 💡',
-                style: TextStyle(color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.w800)),
+            Text('Plan & protect 💡',
+                style: TextStyle(color: pl.textPrimary, fontSize: 22, fontWeight: FontWeight.w800)),
             const SizedBox(height: 4),
-            const Text('Bank link, budgets, cash-flow risk, and smart alerts.',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+            Text('Bank link, cash-flow outlook, and smart alerts.',
+                style: TextStyle(color: pl.textMuted, fontSize: 13)),
             const SizedBox(height: 22),
 
             const _SectionTitle('Bank connection (Plaid)'),
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: AppColors.surface,
+                color: pl.surface,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.border),
+                border: Border.all(color: pl.border),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -67,14 +100,14 @@ class _PlanScreenState extends State<PlanScreen> {
                   Row(children: [
                     Icon(
                       p.plaidLinked ? Icons.check_circle : Icons.link_off,
-                      color: p.plaidLinked ? AppColors.emerald : AppColors.textMuted,
+                      color: p.plaidLinked ? pl.emerald : pl.textMuted,
                       size: 20,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         p.plaidLinked ? 'Linked — transactions sync + webhooks' : 'Mock data until you link',
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                        style: TextStyle(color: pl.textSecondary, fontSize: 13),
                       ),
                     ),
                   ]),
@@ -82,24 +115,10 @@ class _PlanScreenState extends State<PlanScreen> {
                   Row(
                     children: [
                       EmeraldButton(
-                        label: 'Get link token',
+                        label: 'Connect bank',
                         small: true,
                         loading: p.loading,
-                        onTap: () async {
-                          final t = await p.requestPlaidLink();
-                          if (!context.mounted) return;
-                          if (t == null) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Plaid not configured on server')),
-                            );
-                            return;
-                          }
-                          await Clipboard.setData(ClipboardData(text: t));
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Link token copied — paste into Plaid Link')),
-                          );
-                        },
+                        onTap: () => _openPlaidLink(p),
                       ),
                       const SizedBox(width: 8),
                       EmeraldButton(
@@ -116,33 +135,6 @@ class _PlanScreenState extends State<PlanScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _plaidCtrl,
-                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
-                    decoration: const InputDecoration(
-                      hintText: 'Paste public_token from Plaid Link',
-                      hintStyle: TextStyle(color: AppColors.textMuted),
-                      filled: true,
-                      fillColor: AppColors.surfaceAlt,
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: () async {
-                        final ok = await p.submitPlaidToken(_plaidCtrl.text);
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(ok ? 'Linked & synced' : 'Exchange failed')),
-                        );
-                        _plaidCtrl.clear();
-                      },
-                      child: const Text('Exchange public token'),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -152,61 +144,8 @@ class _PlanScreenState extends State<PlanScreen> {
             if (p.cashflow != null)
               _CashFlowCard(f: p.cashflow!)
             else
-              const Text('Loading…', style: TextStyle(color: AppColors.textMuted)),
+              Text('Loading…', style: TextStyle(color: pl.textMuted)),
             const SizedBox(height: 22),
-
-            const _SectionTitle('Category budgets'),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _catCtrl,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
-                      labelText: 'Category',
-                      labelStyle: TextStyle(color: AppColors.textMuted),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 90,
-                  child: TextField(
-                    controller: _limitCtrl,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
-                      labelText: '\$ / mo',
-                      labelStyle: TextStyle(color: AppColors.textMuted),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () async {
-                  final lim = double.tryParse(_limitCtrl.text) ?? 0;
-                  if (lim <= 0) return;
-                  final ok = await p.addBudget(_catCtrl.text.trim(), lim);
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(ok ? 'Budget saved' : 'Failed')),
-                  );
-                },
-                child: const Text('Add / update category budget'),
-              ),
-            ),
-            ...p.budgets.map((g) => _BudgetTile(g)),
-            if (p.budgets.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text('No custom budgets — dashboard uses default benchmarks.',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
-              ),
-            const SizedBox(height: 16),
 
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -220,8 +159,8 @@ class _PlanScreenState extends State<PlanScreen> {
             ),
             ...p.alerts.take(12).map((a) => _AlertTile(a, onDismiss: () => p.dismissAlert(a.id))),
             if (p.alerts.isEmpty)
-              const Text('No alerts yet. Link Plaid, set budgets, and tap Run checks.',
-                  style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+              Text('No alerts yet. Link Plaid and tap Run checks.',
+                  style: TextStyle(color: pl.textMuted, fontSize: 12)),
           ],
         ),
       );
@@ -234,11 +173,14 @@ class _SectionTitle extends StatelessWidget {
   const _SectionTitle(this.text);
 
   @override
-  Widget build(BuildContext context) => Padding(
+  Widget build(BuildContext context) {
+    final pl = context.palette;
+    return Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(text,
-            style: const TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
+            style: TextStyle(color: pl.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
       );
+  }
 }
 
 class _CashFlowCard extends StatelessWidget {
@@ -247,30 +189,31 @@ class _CashFlowCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pl = context.palette;
     final riskColor = f.risk == 'high'
-        ? AppColors.danger
+        ? pl.danger
         : f.risk == 'medium'
-            ? AppColors.warning
-            : AppColors.emerald;
+            ? pl.warning
+            : pl.emerald;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: pl.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: pl.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('Next-month spend (est.)  ${fmt(f.projectedSpend)}',
-              style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700)),
+              style: TextStyle(color: pl.textPrimary, fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
           Text('Recurring ~${fmt(f.recurring)}  ·  Variable ~${fmt(f.variable)}',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+              style: TextStyle(color: pl.textMuted, fontSize: 12)),
           const SizedBox(height: 10),
           Text('Available now ${fmt(f.available)}  →  ~${fmt(f.projectedBalance30d)} in 30d',
-              style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+              style: TextStyle(color: pl.textSecondary, fontSize: 13)),
           const SizedBox(height: 8),
           Row(children: [
             Container(
@@ -288,45 +231,21 @@ class _CashFlowCard extends StatelessWidget {
   }
 }
 
-class _BudgetTile extends StatelessWidget {
-  final BudgetGoalProgress g;
-  const _BudgetTile(this.g);
-
-  @override
-  Widget build(BuildContext context) => Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: g.isOver ? AppColors.danger.withOpacity(0.4) : AppColors.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(g.category, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            Text('${fmt(g.spentThisMonth)} / ${fmt(g.monthlyLimit)}  (${g.percentUsed.toStringAsFixed(0)}%)',
-                style: TextStyle(
-                    color: g.isOver ? AppColors.danger : AppColors.textMuted, fontSize: 12)),
-          ],
-        ),
-      );
-}
-
 class _AlertTile extends StatelessWidget {
   final SmartAlert a;
   final VoidCallback onDismiss;
   const _AlertTile(this.a, {required this.onDismiss});
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) {
+    final pl = context.palette;
+    return Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: AppColors.surfaceAlt,
+          color: pl.surfaceAlt,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border),
+          border: Border.all(color: pl.border),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -335,11 +254,11 @@ class _AlertTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(a.title, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 13)),
+                  Text(a.title, style: TextStyle(color: pl.textPrimary, fontWeight: FontWeight.w700, fontSize: 13)),
                   const SizedBox(height: 4),
-                  Text(a.body, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.4)),
+                  Text(a.body, style: TextStyle(color: pl.textSecondary, fontSize: 12, height: 1.4)),
                   const SizedBox(height: 4),
-                  Text(a.type, style: const TextStyle(color: AppColors.textMuted, fontSize: 10)),
+                  Text(a.type, style: TextStyle(color: pl.textMuted, fontSize: 10)),
                 ],
               ),
             ),
@@ -348,4 +267,5 @@ class _AlertTile extends StatelessWidget {
           ],
         ),
       );
+  }
 }

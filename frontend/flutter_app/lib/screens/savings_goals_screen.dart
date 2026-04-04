@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/api_service.dart';
 import '../theme.dart';
 
 class _Goal {
@@ -13,12 +14,14 @@ class _Goal {
     required this.icon,
     required this.saved,
     required this.target,
+    this.serverId,
   });
 
   final String name;
   final IconData icon;
   double saved;
   final double target;
+  final int? serverId;
 
   double get pct => target <= 0 ? 0 : (saved / target).clamp(0.0, 1.0);
   double get remaining => (target - saved).clamp(0.0, target);
@@ -28,6 +31,7 @@ class _Goal {
         'iconCodePoint': icon.codePoint,
         'saved': saved,
         'target': target,
+        if (serverId != null) 'serverId': serverId,
       };
 
   static _Goal? fromJson(dynamic raw) {
@@ -35,6 +39,7 @@ class _Goal {
     final json = Map<String, dynamic>.from(raw);
     final name = json['name'] as String?;
     final iconCode = json['iconCodePoint'];
+    final sid = json['serverId'] as int? ?? (json['serverId'] as num?)?.toInt();
     final savedRaw = json['saved'];
     final targetRaw = json['target'];
     final saved = savedRaw is num ? savedRaw.toDouble() : double.tryParse('$savedRaw');
@@ -47,7 +52,19 @@ class _Goal {
       icon: IconData(code, fontFamily: 'MaterialIcons'),
       saved: saved,
       target: target,
+      serverId: sid,
     );
+  }
+
+  static _Goal? fromApi(Map<String, dynamic> m) {
+    final name = m['name'] as String? ?? '';
+    if (name.isEmpty) return null;
+    final target = (m['target_amount'] as num?)?.toDouble() ?? 0;
+    final saved = (m['saved_amount'] as num?)?.toDouble() ?? 0;
+    final id = m['id'] as int? ?? (m['id'] as num?)?.toInt();
+    final iconCode = m['icon_code_point'] as int? ?? (m['icon_code_point'] as num?)?.toInt();
+    final icon = iconCode != null ? IconData(iconCode, fontFamily: 'MaterialIcons') : Icons.savings_rounded;
+    return _Goal(name: name, icon: icon, saved: saved, target: target, serverId: id);
   }
 }
 
@@ -65,6 +82,7 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
   double _smartWalletCredits = 223.99;
   List<_Goal> _goals = _defaultGoals();
   bool _loaded = false;
+  bool _apiMode = false;
 
   static List<_Goal> _defaultGoals() => [
         _Goal(name: 'Vacation Fund', icon: Icons.flight_takeoff_rounded, saved: 347, target: 2000),
@@ -118,6 +136,7 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
   }
 
   Future<void> _persist() async {
+    if (_apiMode) return;
     final prefs = await SharedPreferences.getInstance();
     final payload = <String, dynamic>{
       'smartWalletCredits': _smartWalletCredits,
@@ -130,16 +149,32 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
     final g = _goals[index];
     if (g.remaining <= 0 || _smartWalletCredits <= 0) return;
     final add = _smartWalletCredits.clamp(0.0, g.remaining);
+    if (_apiMode && g.serverId != null) {
+      final ok = await ApiService.updateSavingsGoal(g.serverId!, savedAmount: g.saved + add);
+      if (!mounted) return;
+      if (!ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not update goal'), behavior: SnackBarBehavior.floating),
+        );
+        return;
+      }
+      setState(() {
+        _smartWalletCredits -= add;
+        g.saved += add;
+      });
+      return;
+    }
     setState(() {
       _smartWalletCredits -= add;
       g.saved += add;
     });
     await _persist();
     if (!mounted) return;
+    final pl = context.palette;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Applied ${_currency.format(add)} in SmartWallet credits to ${g.name}.'),
-        backgroundColor: AppColors.surfaceAlt,
+        backgroundColor: pl.surfaceAlt,
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -150,33 +185,48 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
     final g = _goals[index];
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surfaceAlt,
-        title: const Text('Delete goal?'),
-        content: Text(
-          'Remove "${g.name}"? Saved progress (${_currency.format(g.saved)}) returns to available SmartWallet credits.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.danger, foregroundColor: AppColors.textPrimary),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
+      builder: (ctx) {
+        final pl = ctx.palette;
+        return AlertDialog(
+          backgroundColor: pl.surfaceAlt,
+          title: Text('Delete goal?', style: TextStyle(color: pl.textPrimary)),
+          content: Text(
+            'Remove "${g.name}"? Saved progress (${_currency.format(g.saved)}) returns to available SmartWallet credits.',
+            style: TextStyle(color: pl.textSecondary),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: pl.danger, foregroundColor: pl.textPrimary),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
     );
     if (ok != true || !mounted) return;
+    if (_apiMode && g.serverId != null) {
+      final del = await ApiService.deleteSavingsGoal(g.serverId!);
+      if (!mounted) return;
+      if (!del) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not delete'), behavior: SnackBarBehavior.floating),
+        );
+        return;
+      }
+    }
     setState(() {
-      _smartWalletCredits += g.saved;
+      if (!_apiMode) _smartWalletCredits += g.saved;
       _goals.removeAt(index);
     });
     await _persist();
     if (!mounted) return;
+    final pl2 = context.palette;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('${g.name} removed.'),
-        backgroundColor: AppColors.surfaceAlt,
+        backgroundColor: pl2.surfaceAlt,
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -187,34 +237,56 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
     final targetCtrl = TextEditingController();
     await showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surfaceAlt,
-        title: const Text('New savings goal'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              style: const TextStyle(color: AppColors.textPrimary),
-              decoration: const InputDecoration(labelText: 'Goal name', labelStyle: TextStyle(color: AppColors.textMuted)),
-            ),
-            TextField(
-              controller: targetCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-              style: const TextStyle(color: AppColors.textPrimary),
-              decoration: const InputDecoration(labelText: 'Target (\$)', labelStyle: TextStyle(color: AppColors.textMuted)),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.emerald, foregroundColor: AppColors.background),
-            onPressed: () async {
+      builder: (ctx) {
+        final pl = ctx.palette;
+        return AlertDialog(
+          backgroundColor: pl.surfaceAlt,
+          title: Text('New savings goal', style: TextStyle(color: pl.textPrimary)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                style: TextStyle(color: pl.textPrimary),
+                decoration: InputDecoration(
+                  labelText: 'Goal name',
+                  labelStyle: TextStyle(color: pl.textMuted),
+                ),
+              ),
+              TextField(
+                controller: targetCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                style: TextStyle(color: pl.textPrimary),
+                decoration: InputDecoration(
+                  labelText: 'Target (\$)',
+                  labelStyle: TextStyle(color: pl.textMuted),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: pl.emerald, foregroundColor: pl.onEmerald),
+              onPressed: () async {
               final name = nameCtrl.text.trim();
               final t = double.tryParse(targetCtrl.text);
               if (name.isEmpty || t == null || t <= 0) return;
+              if (_apiMode) {
+                final created = await ApiService.createSavingsGoal(name: name, target: t, iconCodePoint: Icons.flag_rounded.codePoint);
+                if (!context.mounted) return;
+                Navigator.pop(ctx);
+                if (created != null) {
+                  final g = _Goal.fromApi(created);
+                  if (g != null) setState(() => _goals.insert(0, g));
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Could not create goal'), behavior: SnackBarBehavior.floating),
+                  );
+                }
+                return;
+              }
               setState(() {
                 _goals.add(_Goal(name: name, icon: Icons.flag_rounded, saved: 0, target: t));
               });
@@ -223,17 +295,80 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
             },
             child: const Text('Add'),
           ),
-        ],
-      ),
+          ],
+        );
+      },
     );
     nameCtrl.dispose();
     targetCtrl.dispose();
   }
 
+  Future<void> _addSmartWalletCredits() async {
+    final amountCtrl = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        final pl = ctx.palette;
+        return AlertDialog(
+          backgroundColor: pl.surfaceAlt,
+          title: Text('Add money', style: TextStyle(color: pl.textPrimary)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Top up SmartWallet credits so you can fund goals. (Local demo — not a real payment.)',
+                style: TextStyle(color: pl.textSecondary, fontSize: 13, height: 1.35),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: amountCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                autofocus: true,
+                style: TextStyle(color: pl.textPrimary),
+                decoration: InputDecoration(
+                  labelText: 'Amount (\$)',
+                  labelStyle: TextStyle(color: pl.textMuted),
+                  prefixText: '\$ ',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: pl.emerald, foregroundColor: pl.onEmerald),
+              onPressed: () async {
+                final a = double.tryParse(amountCtrl.text);
+                if (a == null || a <= 0) return;
+                Navigator.pop(ctx);
+                setState(() => _smartWalletCredits += a);
+                await _persist();
+                if (!mounted) return;
+                final pal = context.palette;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Added ${_currency.format(a)} to SmartWallet credits.'),
+                    backgroundColor: pal.surfaceAlt,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+    amountCtrl.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final pl = context.palette;
     if (!_loaded) {
-      return const Center(child: CircularProgressIndicator(color: AppColors.emerald));
+      return Center(child: CircularProgressIndicator(color: pl.emerald));
     }
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
@@ -248,7 +383,7 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
                   Text(
                     'Savings Goals',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          color: AppColors.textPrimary,
+                          color: pl.textPrimary,
                           fontWeight: FontWeight.w800,
                           letterSpacing: -0.6,
                         ),
@@ -256,15 +391,15 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
                   const SizedBox(height: 6),
                   Text(
                     'Fund your goals with SmartWallet credits',
-                    style: TextStyle(color: AppColors.textSecondary.withValues(alpha: 0.95), fontSize: 14),
+                    style: TextStyle(color: pl.textSecondary.withValues(alpha: 0.95), fontSize: 14),
                   ),
                 ],
               ),
             ),
             FilledButton.icon(
               style: FilledButton.styleFrom(
-                backgroundColor: AppColors.emerald,
-                foregroundColor: AppColors.background,
+                backgroundColor: pl.emerald,
+                foregroundColor: pl.onEmerald,
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
@@ -282,16 +417,16 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
             borderRadius: BorderRadius.circular(16),
             gradient: LinearGradient(
               colors: [
-                AppColors.surfaceAlt,
-                AppColors.surfaceAlt.withValues(alpha: 0.85),
+                pl.surfaceAlt,
+                pl.surfaceAlt.withValues(alpha: 0.85),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            border: Border.all(color: AppColors.emerald.withValues(alpha: 0.25)),
+            border: Border.all(color: pl.emerald.withValues(alpha: 0.25)),
             boxShadow: [
               BoxShadow(
-                color: AppColors.emerald.withValues(alpha: 0.06),
+                color: pl.emerald.withValues(alpha: 0.06),
                 blurRadius: 24,
                 offset: const Offset(0, 8),
               ),
@@ -305,17 +440,17 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: AppColors.emeraldDim,
+                      color: pl.emeraldDim,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.bolt_rounded, color: AppColors.emerald, size: 22),
+                    child: Icon(Icons.bolt_rounded, color: pl.emerald, size: 22),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'AVAILABLE SMARTWALLET CREDITS',
                       style: TextStyle(
-                        color: AppColors.textMuted,
+                        color: pl.textMuted,
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 1.1,
@@ -325,19 +460,33 @@ class _SavingsGoalsScreenState extends State<SavingsGoalsScreen> {
                 ],
               ),
               const SizedBox(height: 12),
-              Text(
-                _currency.format(_smartWalletCredits),
-                style: const TextStyle(
-                  color: AppColors.emerald,
-                  fontSize: 34,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -1,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'You only earn SmartWallet credits when you skip an impulse buy and when you complete a savings goal.',
-                style: TextStyle(color: AppColors.textSecondary.withValues(alpha: 0.9), fontSize: 13, height: 1.35),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Text(
+                      _currency.format(_smartWalletCredits),
+                      style: TextStyle(
+                        color: pl.emerald,
+                        fontSize: 34,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -1,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: pl.emeraldDim,
+                      foregroundColor: pl.emerald,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: _addSmartWalletCredits,
+                    icon: const Icon(Icons.add_rounded, size: 20),
+                    label: const Text('Add money', style: TextStyle(fontWeight: FontWeight.w800)),
+                  ),
+                ],
               ),
             ],
           ),
@@ -375,13 +524,14 @@ class _GoalCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pl = context.palette;
     final pctInt = (goal.pct * 100).round().clamp(0, 100);
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: pl.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: pl.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -391,17 +541,17 @@ class _GoalCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: AppColors.emeraldDim,
+                  color: pl.emeraldDim,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(goal.icon, color: AppColors.emerald, size: 24),
+                child: Icon(goal.icon, color: pl.emerald, size: 24),
               ),
               const SizedBox(width: 14),
               Expanded(
                 child: Text(
                   goal.name,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
+                  style: TextStyle(
+                    color: pl.textPrimary,
                     fontWeight: FontWeight.w800,
                     fontSize: 17,
                   ),
@@ -409,14 +559,14 @@ class _GoalCard extends StatelessWidget {
               ),
               Text(
                 '$pctInt%',
-                style: const TextStyle(color: AppColors.emerald, fontWeight: FontWeight.w800, fontSize: 16),
+                style: TextStyle(color: pl.emerald, fontWeight: FontWeight.w800, fontSize: 16),
               ),
               IconButton(
                 tooltip: 'Delete goal',
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                icon: const Icon(Icons.delete_outline_rounded, color: AppColors.danger, size: 22),
+                icon: Icon(Icons.delete_outline_rounded, color: pl.danger, size: 22),
                 onPressed: onDelete,
               ),
             ],
@@ -424,7 +574,7 @@ class _GoalCard extends StatelessWidget {
           const SizedBox(height: 14),
           Text(
             '${currency.format(goal.saved)} of ${currency.format(goal.target)}',
-            style: TextStyle(color: AppColors.textSecondary.withValues(alpha: 0.95), fontSize: 14),
+            style: TextStyle(color: pl.textSecondary.withValues(alpha: 0.95), fontSize: 14),
           ),
           const SizedBox(height: 10),
           ClipRRect(
@@ -432,22 +582,22 @@ class _GoalCard extends StatelessWidget {
             child: LinearProgressIndicator(
               value: goal.pct,
               minHeight: 8,
-              backgroundColor: AppColors.border,
-              color: AppColors.emerald,
+              backgroundColor: pl.border,
+              color: pl.emerald,
             ),
           ),
           const SizedBox(height: 10),
           Text(
             '${currency.format(goal.remaining)} remaining',
-            style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+            style: TextStyle(color: pl.textMuted, fontSize: 13),
           ),
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton(
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.textPrimary,
-                side: const BorderSide(color: AppColors.textSecondary, width: 1.2),
+                foregroundColor: pl.textPrimary,
+                side: BorderSide(color: pl.textSecondary, width: 1.2),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),

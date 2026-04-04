@@ -15,6 +15,7 @@ from app.routes import (
     impulse,
     plaid,
     recommendations,
+    savings_goals,
     subscriptions,
     transactions,
 )
@@ -61,6 +62,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(transactions.router, prefix="/api/transactions", tags=["transactions"])
+app.include_router(savings_goals.router, prefix="/api/savings-goals", tags=["savings-goals"])
 app.include_router(subscriptions.router, prefix="/api/subscriptions", tags=["subscriptions"])
 app.include_router(impulse.router, prefix="/api/impulse", tags=["impulse"])
 app.include_router(recommendations.router, prefix="/api/recommendations", tags=["recommendations"])

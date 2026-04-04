@@ -48,6 +48,7 @@ def _row_to_dict(r: schemas.Transaction, user_id: int) -> dict[str, Any]:
         "date": r.date.isoformat() if r.date else "",
         "user_id": user_id,
         "is_recurring": bool(r.is_recurring),
+        "source": "plaid" if r.plaid_id else "manual",
     }
 
 

@@ -21,6 +21,7 @@ class User(Base):
     budget_goals = relationship("BudgetGoal", back_populates="owner")
     alerts = relationship("Alert", back_populates="owner")
     chat_conversations = relationship("ChatConversation", back_populates="owner")
+    savings_targets = relationship("SavingsTarget", back_populates="owner")
 
 
 class Transaction(Base):
@@ -119,3 +120,18 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     conversation = relationship("ChatConversation", back_populates="messages")
+
+
+class SavingsTarget(Base):
+    """User-defined savings goal with progress (amount saved vs target)."""
+
+    __tablename__ = "savings_targets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    name = Column(String, nullable=False)
+    target_amount = Column(Float, nullable=False)
+    saved_amount = Column(Float, default=0.0)
+    icon_code_point = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    owner = relationship("User", back_populates="savings_targets")

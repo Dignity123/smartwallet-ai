@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
 import '../theme.dart';
 import '../utils/greeting.dart';
+import '../providers/providers.dart';
+import 'settings_screen.dart';
 
 const _quickPrompts = [
   'What subscriptions should I cancel?',
@@ -29,15 +32,58 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   bool _loading = true;
   bool _sending = false;
+  EntitlementsNotifier? _entitlementsListenTarget;
 
   @override
   void initState() {
     super.initState();
-    _openConversation();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final e = context.read<EntitlementsNotifier>();
+    if (!identical(_entitlementsListenTarget, e)) {
+      _entitlementsListenTarget?.removeListener(_onEntitlementsChanged);
+      _entitlementsListenTarget = e;
+      e.addListener(_onEntitlementsChanged);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapIfPremium());
+    }
+  }
+
+  void _onEntitlementsChanged() {
+    if (!mounted) return;
+    final e = _entitlementsListenTarget;
+    if (e == null) return;
+    if (e.isPremium) {
+      if (_conversationId == null && !_loading) {
+        _openConversation();
+      }
+    } else {
+      setState(() {
+        _conversationId = null;
+        _messages.clear();
+        _bootstrapError = null;
+        _loading = false;
+        _sending = false;
+      });
+    }
+  }
+
+  void _bootstrapIfPremium() {
+    if (!mounted) return;
+    final e = _entitlementsListenTarget;
+    if (e == null) return;
+    if (e.isPremium) {
+      if (_conversationId == null) _openConversation();
+    } else {
+      if (_loading) setState(() => _loading = false);
+    }
   }
 
   @override
   void dispose() {
+    _entitlementsListenTarget?.removeListener(_onEntitlementsChanged);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -93,12 +139,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     setState(() => _sending = false);
     if (err != null) {
+      final pal = context.palette;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(err),
           duration: const Duration(seconds: 6),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: AppColors.surfaceAlt,
+          backgroundColor: pal.surfaceAlt,
         ),
       );
       return;
@@ -115,18 +162,36 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final pal = context.palette;
+    final ent = context.watch<EntitlementsNotifier>();
+    if (!ent.isPremium) {
+      return Scaffold(
+        backgroundColor: pal.background,
+        appBar: AppBar(
+          title: const Text('AI Financial Coach'),
+          backgroundColor: pal.surface,
+          elevation: 0,
+        ),
+        body: _PremiumCoachUpsell(
+          onOpenSettings: () {
+            Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+          },
+        ),
+      );
+    }
+
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: pal.background,
       appBar: AppBar(
         title: const Text('Financial assistant'),
-        backgroundColor: AppColors.surface,
+        backgroundColor: pal.surface,
         elevation: 0,
       ),
       body: Column(
         children: [
           Expanded(child: _buildBody(context)),
           if (_sending)
-            const LinearProgressIndicator(minHeight: 2, color: AppColors.emerald),
+            LinearProgressIndicator(minHeight: 2, color: pal.emerald),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -139,24 +204,24 @@ class _ChatScreenState extends State<ChatScreen> {
                       enabled: _conversationId != null && !_sending,
                       minLines: 1,
                       maxLines: 4,
-                      style: const TextStyle(color: AppColors.textPrimary),
+                      style: TextStyle(color: pal.textPrimary),
                       decoration: InputDecoration(
                         hintText: 'Ask about your spending, subscriptions, or savings…',
-                        hintStyle: TextStyle(color: AppColors.textMuted),
+                        hintStyle: TextStyle(color: pal.textMuted),
                         filled: true,
-                        fillColor: AppColors.surface,
+                        fillColor: pal.surface,
                         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: AppColors.border),
+                          borderSide: BorderSide(color: pal.border),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: AppColors.border),
+                          borderSide: BorderSide(color: pal.border),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: AppColors.emerald, width: 1.2),
+                          borderSide: BorderSide(color: pal.emerald, width: 1.2),
                         ),
                       ),
                       onSubmitted: (_) => _send(),
@@ -164,11 +229,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   const SizedBox(width: 8),
                   Material(
-                    color: AppColors.emerald,
+                    color: pal.emerald,
                     borderRadius: BorderRadius.circular(12),
                     child: IconButton(
                       onPressed: _conversationId == null || _sending ? null : _send,
-                      icon: const Icon(Icons.send_rounded, color: AppColors.background),
+                      icon: Icon(Icons.send_rounded, color: pal.onEmerald),
                     ),
                   ),
                 ],
@@ -181,8 +246,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildBody(BuildContext context) {
+    final pal = context.palette;
     if (_loading) {
-      return const Center(child: CircularProgressIndicator(color: AppColors.emerald));
+      return Center(child: CircularProgressIndicator(color: pal.emerald));
     }
     if (_conversationId == null) {
       return Center(
@@ -191,18 +257,18 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.cloud_off_rounded, size: 48, color: AppColors.textMuted.withValues(alpha: 0.8)),
+              Icon(Icons.cloud_off_rounded, size: 48, color: pal.textMuted.withValues(alpha: 0.8)),
               const SizedBox(height: 16),
               SelectableText(
                 _bootstrapError ?? 'Could not start chat',
                 textAlign: TextAlign.left,
-                style: const TextStyle(color: AppColors.textSecondary, height: 1.45, fontSize: 13),
+                style: TextStyle(color: pal.textSecondary, height: 1.45, fontSize: 13),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
                 style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.emerald,
-                  foregroundColor: AppColors.background,
+                  backgroundColor: pal.emerald,
+                  foregroundColor: pal.onEmerald,
                 ),
                 onPressed: _openConversation,
                 icon: const Icon(Icons.refresh_rounded),
@@ -233,20 +299,108 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.85),
             decoration: BoxDecoration(
-              color: mine ? AppColors.emerald.withValues(alpha: 0.18) : AppColors.surface,
+              color: mine ? pal.emerald.withValues(alpha: 0.18) : pal.surface,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(color: pal.border),
             ),
             child: Text(
               m.content,
               style: TextStyle(
-                color: mine ? AppColors.emerald : AppColors.textPrimary,
+                color: mine ? pal.emerald : pal.textPrimary,
                 height: 1.35,
               ),
             ),
           ),
         );
       },
+    );
+  }
+}
+
+class _PremiumCoachUpsell extends StatelessWidget {
+  const _PremiumCoachUpsell({required this.onOpenSettings});
+
+  final VoidCallback onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.palette;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.workspace_premium_rounded, color: pal.emerald, size: 40),
+          const SizedBox(height: 12),
+          Text(
+            'SmartWallet Premium',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: pal.textPrimary,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'The AI Financial Coach is a paid feature: personalized advice, habit patterns, and weekly tips — like a money advisor in your pocket.',
+            style: TextStyle(color: pal.textSecondary, height: 1.4, fontSize: 14),
+          ),
+          const SizedBox(height: 20),
+          _coachBullet(pal, 'Personalized spending advice tailored to your patterns'),
+          _coachBullet(pal, 'Highlights habits that work against your goals'),
+          _coachBullet(pal, 'Weekly nudges to improve your finances'),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: pal.emeraldDim,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: pal.emerald.withValues(alpha: 0.25)),
+            ),
+            child: Text(
+              '“You spend about 25% more on food on weekends. Try setting a simple weekend dining limit.”',
+              style: TextStyle(
+                color: pal.textPrimary.withValues(alpha: 0.92),
+                fontSize: 14,
+                height: 1.35,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'Premium also unlocks unlimited “Can I afford this?” impulse checks (free tier is limited each month).',
+            style: TextStyle(color: pal.textMuted, fontSize: 13, height: 1.35),
+          ),
+          const SizedBox(height: 20),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: pal.emerald,
+              foregroundColor: pal.onEmerald,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            onPressed: onOpenSettings,
+            child: const Text('View Premium in Settings', style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _coachBullet(AppPalette pal, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.star_rounded, color: pal.emerald, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(text, style: TextStyle(color: pal.textSecondary, fontSize: 14, height: 1.35)),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -259,6 +413,7 @@ class _EmptyChatState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pal = context.palette;
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
       child: Column(
@@ -266,17 +421,17 @@ class _EmptyChatState extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.surface,
+              color: pal.surface,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(color: pal.border),
             ),
-            child: const Icon(Icons.smart_toy_rounded, color: AppColors.emerald, size: 44),
+            child: Icon(Icons.smart_toy_rounded, color: pal.emerald, size: 44),
           ),
           const SizedBox(height: 20),
           Text(
-            timeBasedGreeting(),
+            timeBasedGreeting(name: context.watch<AuthProvider>().name),
             style: TextStyle(
-              color: AppColors.textMuted.withValues(alpha: 0.95),
+              color: pal.textMuted.withValues(alpha: 0.95),
               fontSize: 15,
               fontWeight: FontWeight.w600,
             ),
@@ -286,7 +441,7 @@ class _EmptyChatState extends StatelessWidget {
             'Your Financial Assistant is ready',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: AppColors.textPrimary,
+                  color: pal.textPrimary,
                   fontWeight: FontWeight.w800,
                   letterSpacing: -0.3,
                 ),
@@ -296,7 +451,7 @@ class _EmptyChatState extends StatelessWidget {
             'Ask me anything about your spending, subscriptions, or savings goals',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: AppColors.textSecondary.withValues(alpha: 0.95),
+              color: pal.textSecondary.withValues(alpha: 0.95),
               fontSize: 14,
               height: 1.4,
             ),
@@ -311,7 +466,7 @@ class _EmptyChatState extends StatelessWidget {
             childAspectRatio: 1.15,
             children: _quickPrompts.map((p) {
               return Material(
-                color: AppColors.surface,
+                color: pal.surface,
                 borderRadius: BorderRadius.circular(14),
                 child: InkWell(
                   onTap: busy ? null : () => onPrompt(p),
@@ -322,8 +477,8 @@ class _EmptyChatState extends StatelessWidget {
                       alignment: Alignment.centerLeft,
                       child: Text(
                         p,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
+                        style: TextStyle(
+                          color: pal.textSecondary,
                           fontSize: 13,
                           height: 1.35,
                           fontWeight: FontWeight.w500,

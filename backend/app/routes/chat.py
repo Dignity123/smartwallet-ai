@@ -151,7 +151,7 @@ def send_message(
     if not reply_text:
         reply_text = (
             "I couldn’t generate a full answer just now. "
-            "Confirm GEMINI_API_KEY on the server, check Gemini quota at https://ai.dev/rate-limit , "
+            "Confirm OPENAI_API_KEY on the server, check your OpenAI usage/billing, "
             "or try again shortly. "
             "Meanwhile: skim last week’s spending by category and pick one line item to cut by 10%."
         )

@@ -16,24 +16,25 @@ class StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = context.palette;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: p.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accent?.withOpacity(0.3) ?? AppColors.border),
+        border: Border.all(color: accent?.withValues(alpha: 0.3) ?? p.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label.toUpperCase(),
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 10, letterSpacing: 1.0)),
+              style: TextStyle(color: p.textMuted, fontSize: 10, letterSpacing: 1.0)),
           const SizedBox(height: 6),
           Text(value,
-              style: TextStyle(color: accent ?? AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.w800)),
+              style: TextStyle(color: accent ?? p.textPrimary, fontSize: 22, fontWeight: FontWeight.w800)),
           if (sub != null) ...[
             const SizedBox(height: 2),
-            Text(sub!, style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            Text(sub!, style: TextStyle(color: p.textMuted, fontSize: 12)),
           ],
         ],
       ),
@@ -51,6 +52,7 @@ class SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = context.palette;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -59,9 +61,9 @@ class SectionHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title,
-                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w800)),
+                  style: TextStyle(color: p.textPrimary, fontSize: 18, fontWeight: FontWeight.w800)),
               if (subtitle != null)
-                Text(subtitle!, style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                Text(subtitle!, style: TextStyle(color: p.textMuted, fontSize: 13)),
             ],
           ),
         ),
@@ -82,6 +84,7 @@ class EmeraldButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = context.palette;
     return GestureDetector(
       onTap: loading ? null : onTap,
       child: Container(
@@ -89,14 +92,18 @@ class EmeraldButton extends StatelessWidget {
             ? const EdgeInsets.symmetric(horizontal: 14, vertical: 8)
             : const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         decoration: BoxDecoration(
-          color: loading ? AppColors.emerald.withOpacity(0.4) : AppColors.emerald,
+          color: loading ? p.emerald.withValues(alpha: 0.4) : p.emerald,
           borderRadius: BorderRadius.circular(10),
         ),
         child: loading
-            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.background))
+            ? SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: p.onEmerald),
+              )
             : Text(label,
                 style: TextStyle(
-                    color: AppColors.background,
+                    color: p.onEmerald,
                     fontWeight: FontWeight.w700,
                     fontSize: small ? 12 : 14)),
       ),
@@ -111,18 +118,19 @@ class VerdictBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = context.palette;
     final color = verdict == 'buy_now'
-        ? AppColors.emerald
+        ? p.emerald
         : verdict == 'wait'
-            ? AppColors.warning
-            : AppColors.danger;
+            ? p.warning
+            : p.danger;
     final label = verdict.replaceAll('_', ' ').toUpperCase();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
       ),
       child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 12, letterSpacing: 1)),
     );
@@ -136,15 +144,16 @@ class DifficultyBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = context.palette;
     final color = difficulty == 'easy'
-        ? AppColors.emerald
+        ? p.emerald
         : difficulty == 'medium'
-            ? AppColors.warning
-            : AppColors.danger;
+            ? p.warning
+            : p.danger;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
       decoration: BoxDecoration(
-          color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(20)),
+          color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
       child: Text(difficulty.toUpperCase(),
           style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
     );
@@ -157,11 +166,14 @@ class CategoryTag extends StatelessWidget {
   const CategoryTag(this.label, {super.key});
 
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-        decoration: BoxDecoration(
-            color: AppColors.surfaceAlt, borderRadius: BorderRadius.circular(20)),
-        child: Text(label,
-            style: const TextStyle(color: AppColors.textMuted, fontSize: 10, fontWeight: FontWeight.w600)),
-      );
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration:
+          BoxDecoration(color: p.surfaceAlt, borderRadius: BorderRadius.circular(20)),
+      child: Text(label,
+          style: TextStyle(color: p.textMuted, fontSize: 10, fontWeight: FontWeight.w600)),
+    );
+  }
 }

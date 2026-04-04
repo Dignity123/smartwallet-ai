@@ -62,7 +62,14 @@ def register(body: RegisterBody, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 def login(body: LoginBody, db: Session = Depends(get_db)):
     user = db.query(schemas.User).filter(schemas.User.email == body.email.lower()).first()
-    if not user or not verify_password(body.password, user.hashed_password):
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.hashed_password:
+        raise HTTPException(
+            status_code=401,
+            detail="This account uses Google sign-in. Use “Continue with Google” or register with email and password.",
+        )
+    if not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return TokenResponse(
         access_token=create_access_token(user.id),

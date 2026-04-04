@@ -1,5 +1,7 @@
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user, require_uid_matches
@@ -11,12 +13,20 @@ from app.services.plaid_sync import handle_webhook_payload, sync_item_transactio
 router = APIRouter()
 
 
+class LinkTokenRequest(BaseModel):
+    # Optional extras needed for some mobile/OAuth Link flows.
+    redirect_uri: str | None = Field(default=None, max_length=1024)
+    android_package_name: str | None = Field(default=None, max_length=255)
+    webhook: str | None = Field(default=None, max_length=1024)
+
+
 class ExchangeRequest(BaseModel):
     public_token: str
 
 
 @router.post("/link-token")
 def create_link_token(
+    body: LinkTokenRequest,
     db: Session = Depends(get_db),
     user: schemas.User = Depends(get_current_user),
 ):
@@ -38,6 +48,17 @@ def create_link_token(
         country_codes=[CountryCode("US")],
         language="en",
     )
+    # Some Plaid Link flows require redirect_uri and/or android package name.
+    if body.redirect_uri:
+        if hasattr(req, "redirect_uri"):
+            req.redirect_uri = body.redirect_uri
+    if body.android_package_name:
+        # Only set when the installed plaid-python version supports it.
+        if hasattr(req, "android_package_name"):
+            req.android_package_name = body.android_package_name
+    webhook = body.webhook or os.getenv("PLAID_WEBHOOK_URL", "").strip() or None
+    if webhook and hasattr(req, "webhook"):
+        req.webhook = webhook
     resp = client.link_token_create(req)
     data = resp.to_dict() if hasattr(resp, "to_dict") else dict(resp)
     return {"link_token": data.get("link_token")}
