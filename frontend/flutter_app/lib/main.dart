@@ -156,7 +156,7 @@ class _MainShellState extends State<MainShell> {
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: Tooltip(
-              message: nameOrEmail.isEmpty ? 'Demo profile' : nameOrEmail,
+              message: nameOrEmail.isEmpty ? '' : nameOrEmail,
               child: Container(
                 width: 34,
                 height: 34,
